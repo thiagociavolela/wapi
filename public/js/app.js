@@ -40,8 +40,9 @@ async function init() {
 
 async function loadConversations(preserve = true) {
   const data = await api(`/api/conversations?search=${encodeURIComponent($('#search').value)}&status=${encodeURIComponent(state.status)}`);
-  $('#total-count').textContent = data.items.length;
-  $('#unread-count').textContent = data.items.reduce((total, item) => total + Number(item.unreadCount || 0), 0);
+  $('#total-count').textContent = Number(data.counts?.total || 0);
+  $('#unread-count').textContent = Number(data.counts?.unreadCount || 0);
+  document.querySelectorAll('[data-count]').forEach(badge => { badge.textContent = Number(data.counts?.[badge.dataset.count] || 0); });
   state.conversations = data.items;
   renderConversations();
   if (preserve && state.active) state.active = state.conversations.find(item => item.id === state.active.id) || state.active;

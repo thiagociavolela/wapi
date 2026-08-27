@@ -33,6 +33,18 @@ export async function listConversations(organizationId: string, search = "", sta
   return rows;
 }
 
+export async function countConversations(organizationId: string, search = "") {
+  const term = `%${search.trim()}%`;
+  const [rows] = await pool.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total,
+    SUM(c.status = 'new') AS newCount, SUM(c.status = 'open') AS openCount,
+    SUM(c.status = 'pending') AS pendingCount, SUM(c.status = 'resolved') AS resolvedCount,
+    COALESCE(SUM(c.unread_count), 0) AS unreadCount
+    FROM conversations c JOIN contacts ct ON ct.id = c.contact_id
+    WHERE c.organization_id = ? AND (? = '%%' OR ct.name LIKE ? OR ct.profile_name LIKE ? OR ct.phone LIKE ?)`,
+    [organizationId, term, term, term, term]);
+  return rows[0] || {};
+}
+
 export async function getMessages(organizationId: string, conversationId: string, before?: string) {
   const params: any[] = [organizationId, conversationId];
   let cursor = "";
