@@ -48,7 +48,7 @@ export async function getMessages(organizationId: string, conversationId: string
   return { items: rows.slice(0, 50).reverse(), hasMore };
 }
 
-export async function sendAgentText(organizationId: string, userId: string, conversationId: string, body: string) {
+export async function sendAgentText(organizationId: string, userId: string, conversationId: string, body: string, clientId?: string) {
   const [rows] = await pool.execute<RowDataPacket[]>(`
     SELECT ct.wa_id AS waId, c.service_window_expires_at AS expiresAt
     FROM conversations c JOIN contacts ct ON ct.id = c.contact_id
@@ -58,7 +58,7 @@ export async function sendAgentText(organizationId: string, userId: string, conv
   if (!conversation.expiresAt || new Date(conversation.expiresAt).getTime() <= Date.now()) {
     throw new Error("A janela de atendimento encerrou. Envie um template aprovado.");
   }
-  const id = crypto.randomUUID();
+  const id = clientId || crypto.randomUUID();
   await pool.execute(`INSERT INTO messages
     (id, organization_id, conversation_id, direction, type, text_body, status, sent_by_user_id)
     VALUES (?, ?, ?, 'outbound', 'text', ?, 'queued', ?)`, [id, organizationId, conversationId, body, userId]);

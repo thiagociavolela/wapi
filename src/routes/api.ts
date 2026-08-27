@@ -44,10 +44,10 @@ apiRouter.patch("/conversations/:id/routing", async (req, res) => {
   res.json({ ok: await updateConversationRouting(req.auth!.organizationId, req.auth!.id, String(req.params.id), parsed.data) });
 });
 apiRouter.post("/conversations/:id/messages", async (req, res) => {
-  const parsed = z.object({ text: z.string().trim().min(1).max(4096) }).safeParse(req.body);
+  const parsed = z.object({ text: z.string().trim().min(1).max(4096), clientId: z.string().uuid().optional() }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "A mensagem precisa ter entre 1 e 4096 caracteres." });
   try {
-    res.status(201).json(await sendAgentText(req.auth!.organizationId, req.auth!.id, String(req.params.id), parsed.data.text));
+    res.status(201).json(await sendAgentText(req.auth!.organizationId, req.auth!.id, String(req.params.id), parsed.data.text, parsed.data.clientId));
   } catch (error) {
     res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar mensagem." });
   }

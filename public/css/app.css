@@ -289,6 +289,7 @@ body{background:#090a11;color:var(--text)}
 .quick-popover,.modal{color:#eeeef5;border:1px solid #303342;background:#171923}.quick-reply{color:#e8e6ef}.quick-reply:hover{background:rgba(131,109,255,.13)}.quick-reply small,.modal-description{color:#9296a8}.modal-head>button{color:#aaaebe;background:#242733}.modal input,.modal textarea,.modal select{color:#f0eef7;border-color:#303342;background:#1d1f2a}.ghost{color:#c3c1cd;border-color:#343746;background:#1d1f2a}
 .message-list::-webkit-scrollbar-thumb,.conversation-list::-webkit-scrollbar-thumb{background:#353849;border-color:transparent}
 .toast{color:#fff;border:1px solid #38334f;background:#211d35}
+.message-status.queued{display:inline-block;color:#b8afff;animation:sync-pulse 1s ease-in-out infinite}.message-retry{margin-right:5px;padding:2px 6px;border:0;border-radius:7px;color:#ffd4da;background:rgba(255,104,120,.17);font-size:10px;font-weight:800}.message-retry:hover{background:rgba(255,104,120,.28)}@keyframes sync-pulse{50%{opacity:.35;transform:scale(.88)}}
 
 /* Dark authentication experience */
 .login-page{position:relative;isolation:isolate;background:#090a11;background-image:radial-gradient(circle at 18% 14%,rgba(112,78,234,.24),transparent 28%),radial-gradient(circle at 83% 82%,rgba(24,184,131,.14),transparent 30%),linear-gradient(145deg,#090a11,#10111c);color:#f3f2fa}

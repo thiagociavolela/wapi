@@ -1,7 +1,7 @@
 import { api } from './api.js';
 
 const $ = (selector) => document.querySelector(selector);
-const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], active: null, status: '', searchTimer: null };
+const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], active: null, status: '', searchTimer: null };
 
 function escapeHtml(value = '') { const node = document.createElement('div'); node.textContent = String(value); return node.innerHTML; }
 function initials(name = '?') { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase(); }
@@ -79,22 +79,31 @@ function updateWindow() {
 
 async function loadMessages() {
   const data = await api(`/api/conversations/${state.active.id}/messages`);
+  state.messages = data.items;
+  renderMessages();
+}
+
+function renderMessages() {
+  if (!state.active) return;
+  const serverIds = new Set(state.messages.map(item => item.id));
+  const pending = state.pendingMessages.filter(item => item.conversationId === state.active.id && !serverIds.has(item.id));
+  const items = [...state.messages, ...pending].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
   let previousDay = ''; let previousDirection = '';
-  $('#message-list').innerHTML = data.items.length ? data.items.map(item => {
+  $('#message-list').innerHTML = items.length ? items.map(item => {
     const currentDay = dayKey(item.createdAt);
     const separator = currentDay !== previousDay ? `<div class="message-day"><span>${dayLabel(item.createdAt)}</span></div>` : '';
     const grouped = currentDay === previousDay && item.direction === previousDirection;
     previousDay = currentDay; previousDirection = item.direction;
     return `${separator}<div class="message-row ${item.direction} ${grouped ? 'same-author' : 'new-author'}"><article class="bubble">
       ${item.senderName ? `<small>${escapeHtml(item.senderName)}</small>` : ''}${messageContent(item)}
-      <footer><time>${time(item.createdAt)}</time>${item.direction === 'outbound' ? `<span class="message-status ${item.status}" title="${statusLabel(item.status)}">${statusIcon(item.status)}</span>` : ''}</footer>
+      <footer>${item.status === 'failed' && item.direction === 'outbound' ? `<button type="button" class="message-retry" data-retry-id="${item.id}">Reenviar</button>` : ''}<time>${time(item.createdAt)}</time>${item.direction === 'outbound' ? `<span class="message-status ${item.status}" title="${statusLabel(item.status)}">${statusIcon(item.status)}</span>` : ''}</footer>
     </article></div>`;
   }).join('') : '<div class="empty">Ainda não há mensagens.</div>';
   $('#message-list').scrollTop = $('#message-list').scrollHeight;
 }
 
-function statusIcon(status) { return status === 'read' ? '✓✓' : status === 'delivered' ? '✓✓' : status === 'failed' ? '!' : '✓'; }
-function statusLabel(status) { return ({ sent: 'Enviada', delivered: 'Entregue', read: 'Lida', failed: 'Falha no envio' })[status] || status; }
+function statusIcon(status) { return status === 'queued' ? '◷' : status === 'read' ? '✓✓' : status === 'delivered' ? '✓✓' : status === 'failed' ? '!' : '✓'; }
+function statusLabel(status) { return ({ queued: 'Enviando…', sent: 'Enviada', delivered: 'Entregue', read: 'Lida', failed: 'Falha no envio' })[status] || status; }
 function toast(message) { $('#toast').textContent = message; $('#toast').classList.remove('hidden'); setTimeout(() => $('#toast').classList.add('hidden'), 3500); }
 
 function renderAgentOptions() {
@@ -129,9 +138,32 @@ $('#search').addEventListener('input', () => { clearTimeout(state.searchTimer); 
 document.querySelectorAll('.filter').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('.filter').forEach(x => x.classList.remove('active')); button.classList.add('active'); state.status = button.dataset.status; loadConversations(false); }));
 $('#composer').addEventListener('submit', async event => {
   event.preventDefault(); const text = $('#message').value.trim(); if (!text || !state.active) return;
-  $('.send-button').disabled = true;
-  try { await api(`/api/conversations/${state.active.id}/messages`, { method: 'POST', body: JSON.stringify({ text }) }); $('#message').value = ''; await Promise.all([loadMessages(), loadConversations()]); }
-  catch (error) { toast(error.message); } finally { $('.send-button').disabled = !windowOpen(state.active); }
+  $('#message').value = ''; $('#message').style.height = 'auto';
+  await sendOptimisticMessage(state.active.id, text);
+});
+
+async function sendOptimisticMessage(conversationId, text) {
+  const clientId = crypto.randomUUID();
+  const optimistic = { id: clientId, conversationId, direction: 'outbound', type: 'text', textBody: text, status: 'queued', senderName: state.user.name, createdAt: new Date().toISOString(), optimistic: true };
+  state.pendingMessages.push(optimistic);
+  if (state.active?.id === conversationId) renderMessages();
+  try {
+    await api(`/api/conversations/${conversationId}/messages`, { method: 'POST', body: JSON.stringify({ text, clientId }) });
+    state.pendingMessages = state.pendingMessages.filter(item => item.id !== clientId);
+    if (state.active?.id === conversationId) await loadMessages();
+    await loadConversations();
+  } catch (error) {
+    optimistic.status = 'failed'; optimistic.errorMessage = error.message;
+    if (state.active?.id === conversationId) renderMessages();
+    toast(`Não foi possível enviar: ${error.message}`);
+  }
+}
+
+$('#message-list').addEventListener('click', event => {
+  const button = event.target.closest('[data-retry-id]'); if (!button) return;
+  const failed = state.pendingMessages.find(item => item.id === button.dataset.retryId) || state.messages.find(item => item.id === button.dataset.retryId); if (!failed) return;
+  state.pendingMessages = state.pendingMessages.filter(item => item.id !== failed.id);
+  sendOptimisticMessage(failed.conversationId || state.active.id, failed.textBody);
 });
 $('#assign').addEventListener('click', () => { if (!state.active) return; const assigned = state.users.find(user => user.name === state.active.assignedUserName); $('#agent-select').value = assigned?.id || state.user.id; openDialog('assign-dialog'); });
 $('#detail-assign-shortcut').addEventListener('click', () => $('#assign').click());
