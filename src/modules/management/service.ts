@@ -18,7 +18,11 @@ export async function getDashboard(organizationId: string) {
     SUM(service_window_expires_at BETWEEN NOW(3) AND DATE_ADD(NOW(3), INTERVAL 2 HOUR) AND status <> 'resolved') AS windowExpiringCount,
     SUM((service_window_expires_at IS NULL OR service_window_expires_at <= NOW(3)) AND status <> 'resolved') AS windowExpiredCount,
     SUM(assigned_user_id IS NULL AND status <> 'resolved') AS unassignedCount,
-    SUM(priority IN ('high', 'urgent') AND status <> 'resolved') AS highPriorityCount
+    SUM(priority IN ('high', 'urgent') AND status <> 'resolved') AS highPriorityCount,
+    SUM(created_at >= CURDATE()) AS createdToday,
+    SUM(first_response_at >= CURDATE()) AS firstRespondedToday,
+    SUM(resolved_at >= CURDATE()) AS resolvedToday,
+    SUM(first_response_at IS NOT NULL) AS everRespondedCount
     FROM conversations WHERE organization_id = ?`, [organizationId]);
   const [agents] = await pool.execute<RowDataPacket[]>(`SELECT u.id, u.name,
     COUNT(c.id) AS conversations,
@@ -35,20 +39,22 @@ export async function getDashboard(organizationId: string) {
     SUM(created_at >= CURDATE()) AS messagesToday,
     SUM(created_at >= CURDATE() AND direction = 'inbound') AS inboundToday,
     SUM(created_at >= CURDATE() AND direction = 'outbound') AS outboundToday,
+    COUNT(DISTINCT CASE WHEN created_at >= CURDATE() AND direction = 'inbound' THEN conversation_id END) AS conversationsReceivedToday,
+    COUNT(DISTINCT CASE WHEN created_at >= CURDATE() AND direction = 'outbound' THEN conversation_id END) AS conversationsAnsweredToday,
     SUM(created_at >= DATE_SUB(NOW(3), INTERVAL 7 DAY)) AS messagesSevenDays
     FROM messages WHERE organization_id = ?`, [organizationId]);
   const [dailyMessages] = await pool.execute<RowDataPacket[]>(`SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS day,
     SUM(direction = 'inbound') AS inbound, SUM(direction = 'outbound') AS outbound
     FROM messages WHERE organization_id = ? AND created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
-    GROUP BY DATE(created_at) ORDER BY day`, [organizationId]);
+    GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d') ORDER BY day`, [organizationId]);
   const [priorities] = await pool.execute<RowDataPacket[]>(`SELECT priority, COUNT(*) AS total FROM conversations
     WHERE organization_id = ? AND status <> 'resolved' GROUP BY priority`, [organizationId]);
   const [recent] = await pool.execute<RowDataPacket[]>(`SELECT c.id, COALESCE(ct.name, ct.profile_name, ct.phone) AS contactName,
     ct.phone, c.status, c.priority, c.unread_count AS unreadCount, c.service_window_expires_at AS serviceWindowExpiresAt,
     c.last_message_at AS lastMessageAt, u.name AS assignedUserName
     FROM conversations c JOIN contacts ct ON ct.id = c.contact_id LEFT JOIN users u ON u.id = c.assigned_user_id
-    WHERE c.organization_id = ? AND c.status <> 'resolved'
-    ORDER BY (c.priority = 'urgent') DESC, c.unread_count DESC, c.last_message_at DESC LIMIT 8`, [organizationId]);
+    WHERE c.organization_id = ?
+    ORDER BY c.last_message_at DESC, c.updated_at DESC LIMIT 12`, [organizationId]);
   return { summary: summary[0], agents, teams, messageSummary: messageSummary[0], dailyMessages, priorities, recent,
     averageFirstResponseSeconds: Number(response[0]?.averageFirstResponseSeconds ?? 0), generatedAt: new Date().toISOString() };
 }

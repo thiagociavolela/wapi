@@ -18,14 +18,14 @@ async function init() {
 async function loadDashboard() {
   const data = await api('/api/management/dashboard'); const s = data.summary || {};
   $('#metric-grid').innerHTML = [
-    ['Conversas ativas', number(s.newCount) + number(s.openCount) + number(s.pendingCount), `${number(s.unreadCount)} mensagens não lidas`, 'purple', '⌁'],
-    ['Janelas abertas', number(s.windowOpenCount), 'Resposta livre disponível', 'green', '◷'],
-    ['Próximas do vencimento', number(s.windowExpiringCount), 'Expiram nas próximas 2 horas', 'amber', '⌛'],
-    ['Janelas encerradas', number(s.windowExpiredCount), 'Exigem template aprovado', 'neutral', '⊘'],
-    ['Novas conversas', number(s.newCount), 'Aguardando atendimento', 'purple', '+'],
+    ['Total de conversas', number(s.total), `${number(s.everRespondedCount)} já receberam resposta`, 'purple', '⌁'],
+    ['Conversas ativas', number(s.newCount) + number(s.openCount) + number(s.pendingCount), `${number(s.unreadCount)} mensagens não lidas`, 'green', '●'],
+    ['Recebidas hoje', number(data.messageSummary?.conversationsReceivedToday), `${number(data.messageSummary?.inboundToday)} mensagens recebidas`, 'purple', '↓'],
+    ['Respondidas hoje', number(data.messageSummary?.conversationsAnsweredToday), `${number(data.messageSummary?.outboundToday)} mensagens enviadas`, 'green', '↑'],
+    ['Resolvidas hoje', number(s.resolvedToday), `${number(s.resolvedCount)} resolvidas no total`, 'green', '✓'],
+    ['Janelas abertas', number(s.windowOpenCount), `${number(s.windowExpiringCount)} vencem em até 2 horas`, 'amber', '◷'],
     ['SLA vencido', number(s.slaBreached), 'Primeira resposta atrasada', 'danger', '!'],
-    ['Sem responsável', number(s.unassignedCount), 'Conversas não atribuídas', 'amber', '◇'],
-    ['Resposta média', formatSeconds(data.averageFirstResponseSeconds), `${number(data.messageSummary?.messagesToday)} mensagens hoje`, 'green', '↗']
+    ['Resposta média', formatSeconds(data.averageFirstResponseSeconds), `${number(data.messageSummary?.messagesToday)} mensagens hoje`, 'purple', '↗']
   ].map(([label, value, help, kind, icon]) => `<article class="metric-card ${kind}"><div class="metric-top"><span>${label}</span><i>${icon}</i></div><strong>${value}</strong><small>${help}</small></article>`).join('');
   renderMessageChart(data.dailyMessages || [], number(data.messageSummary?.messagesSevenDays));
   renderWindowHealth(s); renderDistributions(s, data.priorities || []); renderAttention(data.recent || []);
@@ -56,7 +56,8 @@ function renderDistributions(summary, priorities) {
 }
 
 function renderAttention(items) {
-  $('#attention-list').innerHTML = items.length ? items.map(item => { const open = item.serviceWindowExpiresAt && new Date(item.serviceWindowExpiresAt) > new Date(); return `<a class="attention-row" href="/?conversation=${item.id}"><span class="attention-avatar">${escapeHtml((item.contactName || '?').slice(0, 2).toUpperCase())}</span><span class="attention-contact"><strong>${escapeHtml(item.contactName)}</strong><small>${escapeHtml(item.phone)}</small></span><span class="priority-pill ${item.priority}">${escapeHtml(item.priority)}</span><span class="window-pill ${open ? 'open' : 'closed'}">${open ? `Aberta até ${shortTime(item.serviceWindowExpiresAt)}` : 'Janela encerrada'}</span><span class="attention-agent">${escapeHtml(item.assignedUserName || 'Não atribuído')}</span>${number(item.unreadCount) ? `<b class="attention-unread">${number(item.unreadCount)}</b>` : ''}</a>`; }).join('') : '<div class="empty">Nenhuma conversa exige atenção.</div>';
+  const statusNames = { new: 'Nova', open: 'Em atendimento', pending: 'Pendente', resolved: 'Resolvida' };
+  $('#attention-list').innerHTML = items.length ? items.map(item => `<a class="attention-row" href="/?conversation=${item.id}"><span class="attention-avatar">${escapeHtml((item.contactName || '?').slice(0, 2).toUpperCase())}</span><span class="attention-contact"><strong>${escapeHtml(item.contactName)}</strong><small>${escapeHtml(item.phone)}</small></span><span class="status-pill ${item.status}">${statusNames[item.status] || escapeHtml(item.status)}</span><span class="priority-pill ${item.priority}">${escapeHtml(item.priority)}</span><span class="attention-agent">${escapeHtml(item.assignedUserName || 'Não atribuído')}</span><span class="attention-time">${shortTime(item.lastMessageAt)}</span>${number(item.unreadCount) ? `<b class="attention-unread">${number(item.unreadCount)}</b>` : ''}</a>`).join('') : '<div class="empty">Nenhuma conversa registrada.</div>';
 }
 
 async function loadUsers() {
