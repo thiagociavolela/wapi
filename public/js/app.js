@@ -1,7 +1,7 @@
 import { api } from './api.js';
 
 const $ = (selector) => document.querySelector(selector);
-const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], active: null, status: '', searchTimer: null };
+const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], active: null, status: 'new', searchTimer: null };
 
 function escapeHtml(value = '') { const node = document.createElement('div'); node.textContent = String(value); return node.innerHTML; }
 function initials(name = '?') { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase(); }
@@ -34,7 +34,10 @@ async function init() {
   state.users = users.items; state.teams = teams.items; state.quickReplies = quickReplies.items;
   renderAgentOptions(); renderTeamOptions(); renderQuickReplies(); await loadConversations();
   const requestedConversation = new URLSearchParams(location.search).get('conversation');
-  if (requestedConversation && state.conversations.some(item => item.id === requestedConversation)) await openConversation(requestedConversation);
+  if (requestedConversation) {
+    state.status = ''; document.querySelectorAll('.filter').forEach(item => item.classList.toggle('active', item.dataset.status === ''));
+    await loadConversations(); if (state.conversations.some(item => item.id === requestedConversation)) await openConversation(requestedConversation);
+  }
   connectEvents();
 }
 
