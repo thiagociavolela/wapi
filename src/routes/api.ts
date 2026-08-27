@@ -1,11 +1,18 @@
 import { Router } from "express";
+import multer from "multer";
 import { z } from "zod";
 import { requireAuth } from "../modules/auth/auth.js";
-import { addNote, assignConversation, changeStatus, getMessages, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, replaceTags, sendAgentTemplate, sendAgentText, updateContactName } from "../modules/conversations/service.js";
+import { addNote, assignConversation, changeStatus, getMessageMedia, getMessages, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, replaceTags, sendAgentMedia, sendAgentTemplate, sendAgentText, updateContactName } from "../modules/conversations/service.js";
 import { subscribe } from "../modules/realtime/events.js";
 import { isMetaConfigured } from "../config.js";
+import { listMessageTemplates } from "../modules/meta/client.js";
 
 export const apiRouter = Router();
+const mediaUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, callback) => callback(null, /^(image|audio|video)\//.test(file.mimetype) || ["application/pdf", "text/plain", "application/zip"].includes(file.mimetype))
+});
 apiRouter.use(requireAuth);
 
 apiRouter.get("/status", (_req, res) => res.json({ ok: true, metaConfigured: isMetaConfigured() }));
@@ -14,6 +21,12 @@ apiRouter.get("/conversations/:id/messages", async (req, res) => res.json(await 
 apiRouter.post("/conversations/:id/read", async (req, res) => res.json({ ok: await markConversationRead(req.auth!.organizationId, String(req.params.id)) }));
 apiRouter.get("/users", async (req, res) => res.json({ items: await listUsers(req.auth!.organizationId) }));
 apiRouter.get("/quick-replies", async (req, res) => res.json({ items: await listQuickReplies(req.auth!.organizationId) }));
+apiRouter.get("/templates", async (_req, res) => {
+  try {
+    const result = await listMessageTemplates();
+    res.json({ items: result.data.filter((item) => item.status === "APPROVED") });
+  } catch (error) { res.status(502).json({ error: error instanceof Error ? error.message : "Falha ao listar templates." }); }
+});
 apiRouter.post("/conversations/:id/assign", async (req, res) => {
   const parsed = z.object({ userId: z.string().uuid().nullable() }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Atendente inválido." });
@@ -32,6 +45,22 @@ apiRouter.post("/conversations/:id/messages", async (req, res) => {
   } catch (error) {
     res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar mensagem." });
   }
+});
+apiRouter.post("/conversations/:id/media", mediaUpload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "Selecione um arquivo válido de até 20 MB." });
+  const caption = typeof req.body.caption === "string" ? req.body.caption.trim().slice(0, 1024) : undefined;
+  try {
+    res.status(201).json(await sendAgentMedia(req.auth!.organizationId, req.auth!.id, String(req.params.id), {
+      buffer: req.file.buffer, mimeType: req.file.mimetype, fileName: req.file.originalname, caption
+    }));
+  } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar mídia." }); }
+});
+apiRouter.get("/messages/:id/media", async (req, res) => {
+  try {
+    const media = await getMessageMedia(req.auth!.organizationId, String(req.params.id));
+    res.set({ "Content-Type": media.mimeType, "Cache-Control": "private, max-age=300", "Content-Length": String(media.buffer.length) });
+    res.send(media.buffer);
+  } catch (error) { res.status(404).json({ error: error instanceof Error ? error.message : "Mídia não encontrada." }); }
 });
 apiRouter.post("/conversations/:id/templates", async (req, res) => {
   const parsed = z.object({

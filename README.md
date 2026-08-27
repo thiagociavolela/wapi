@@ -18,7 +18,10 @@ Projeto independente em Node.js, TypeScript, HTML, CSS e JavaScript para atendim
 - Etiquetas comerciais por conversa.
 - Respostas rápidas com atalhos pré-configurados.
 - Edição do nome do contato.
-- Envio de templates oficiais sem variáveis, inclusive fora da janela de 24 horas.
+- Recebimento e envio oficial de imagens, áudios, vídeos e documentos.
+- Download de mídias protegido pela sessão do atendente.
+- Sincronização dos templates aprovados diretamente da WABA.
+- Envio de templates com variáveis de texto em cabeçalho e corpo, inclusive fora da janela de 24 horas.
 - Docker Compose para MySQL local.
 
 ## Requisitos
@@ -76,6 +79,6 @@ npm start
 
 ## Próximos módulos
 
-Esta é a fundação e o primeiro fluxo comercial utilizável. A evolução prevista inclui upload/download seguro de mídias, sincronização automática e parâmetros dinâmicos de templates, equipes e filas avançadas, SLA, storage S3/R2, Redis/BullMQ, automações, relatórios e IA assistiva.
+Esta é a fundação e o primeiro fluxo comercial utilizável. A evolução prevista inclui equipes e filas avançadas, SLA, storage S3/R2, Redis/BullMQ, automações, relatórios e IA assistiva.
 
 Para múltiplas instâncias do Node, substitua o emissor SSE em memória por Redis Pub/Sub e processe webhooks em uma fila durável antes de responder à Meta.

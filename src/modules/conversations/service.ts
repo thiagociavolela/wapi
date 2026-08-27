@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "../../database/pool.js";
 import { publish } from "../realtime/events.js";
-import { sendTemplate, sendText } from "../meta/client.js";
+import { downloadMedia, sendMedia, sendTemplate, sendText, uploadMedia } from "../meta/client.js";
 
 const DEFAULT_ORG_SQL = "SELECT id FROM organizations ORDER BY created_at LIMIT 1";
 
@@ -97,6 +97,46 @@ export async function sendAgentTemplate(organizationId: string, userId: string, 
   return { id };
 }
 
+export async function sendAgentMedia(organizationId: string, userId: string, conversationId: string, input: {
+  buffer: Buffer; mimeType: string; fileName: string; caption?: string;
+}) {
+  const [rows] = await pool.execute<RowDataPacket[]>(`SELECT ct.wa_id AS waId, c.service_window_expires_at AS expiresAt
+    FROM conversations c JOIN contacts ct ON ct.id = c.contact_id
+    WHERE c.id = ? AND c.organization_id = ? LIMIT 1`, [conversationId, organizationId]);
+  const conversation = rows[0];
+  if (!conversation) throw new Error("Conversa não encontrada.");
+  if (!conversation.expiresAt || new Date(conversation.expiresAt).getTime() <= Date.now()) throw new Error("A janela de atendimento encerrou. Envie um template aprovado.");
+  const type = mediaTypeFromMime(input.mimeType);
+  const id = crypto.randomUUID();
+  const preview = input.caption || input.fileName || `[${type}]`;
+  await pool.execute(`INSERT INTO messages
+    (id, organization_id, conversation_id, direction, type, text_body, content, status, sent_by_user_id)
+    VALUES (?, ?, ?, 'outbound', ?, ?, ?, 'queued', ?)`,
+    [id, organizationId, conversationId, type, preview, JSON.stringify({ mimeType: input.mimeType, fileName: input.fileName }), userId]);
+  try {
+    const mediaId = await uploadMedia(input.buffer, input.mimeType, input.fileName);
+    const result = await sendMedia(String(conversation.waId), type, mediaId, input.caption, input.fileName);
+    await pool.execute("UPDATE messages SET meta_message_id = ?, content = ?, status = 'sent', sent_at = NOW(3) WHERE id = ?",
+      [result.messageId, JSON.stringify({ mediaId, mimeType: input.mimeType, fileName: input.fileName, caption: input.caption ?? null }), id]);
+    await pool.execute("UPDATE conversations SET last_message_preview = ?, last_message_at = NOW(3), status = 'open' WHERE id = ?", [preview.slice(0, 500), conversationId]);
+    await audit(organizationId, userId, "media.sent", "conversation", conversationId, { type, fileName: input.fileName });
+  } catch (error) {
+    await pool.execute("UPDATE messages SET status = 'failed', error_message = ? WHERE id = ?", [error instanceof Error ? error.message : "Falha no envio", id]);
+    throw error;
+  } finally { publish(organizationId, { type: "message", conversationId }); }
+  return { id };
+}
+
+export async function getMessageMedia(organizationId: string, messageId: string) {
+  const [rows] = await pool.execute<RowDataPacket[]>("SELECT type, content FROM messages WHERE id = ? AND organization_id = ? LIMIT 1", [messageId, organizationId]);
+  const row = rows[0];
+  if (!row || !["image", "audio", "video", "document", "sticker"].includes(String(row.type))) throw new Error("Mídia não encontrada.");
+  const content = typeof row.content === "string" ? JSON.parse(row.content) : row.content;
+  const mediaId = content?.mediaId ?? content?.[row.type]?.id;
+  if (!mediaId) throw new Error("Identificador da mídia indisponível.");
+  return downloadMedia(String(mediaId));
+}
+
 export async function listUsers(organizationId: string) {
   const [rows] = await pool.execute<RowDataPacket[]>(
     "SELECT id, name, email, role FROM users WHERE organization_id = ? AND active = TRUE ORDER BY name", [organizationId]);
@@ -183,4 +223,11 @@ export async function changeStatus(organizationId: string, conversationId: strin
 async function audit(organizationId: string, userId: string | null, action: string, entityType: string, entityId: string, metadata?: object) {
   await pool.execute(`INSERT INTO audit_logs (organization_id, user_id, action, entity_type, entity_id, metadata)
     VALUES (?, ?, ?, ?, ?, ?)`, [organizationId, userId, action, entityType, entityId, metadata ? JSON.stringify(metadata) : null]);
+}
+
+function mediaTypeFromMime(mimeType: string): "image" | "audio" | "video" | "document" {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("video/")) return "video";
+  return "document";
 }

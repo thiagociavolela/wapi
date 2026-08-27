@@ -1,7 +1,7 @@
 import { api } from './api.js';
 
 const $ = (selector) => document.querySelector(selector);
-const state = { user: null, users: [], quickReplies: [], tags: [], conversations: [], active: null, status: '', searchTimer: null };
+const state = { user: null, users: [], quickReplies: [], templates: [], tags: [], conversations: [], active: null, status: '', searchTimer: null };
 
 function escapeHtml(value = '') { const node = document.createElement('div'); node.textContent = String(value); return node.innerHTML; }
 function initials(name = '?') { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase(); }
@@ -9,6 +9,17 @@ function displayName(item) { return item.name || item.profileName || item.phone 
 function time(value) { return value ? new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : ''; }
 function dateTime(value) { return value ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : 'Encerrada'; }
 function windowOpen(item) { return item?.serviceWindowExpiresAt && new Date(item.serviceWindowExpiresAt) > new Date(); }
+function messageContent(item) {
+  const url = `/api/messages/${encodeURIComponent(item.id)}/media`;
+  const content = typeof item.content === 'string' ? JSON.parse(item.content || '{}') : (item.content || {});
+  if (item.type === 'image' || item.type === 'sticker') return `<a href="${url}" target="_blank" class="media-preview"><img src="${url}" alt="${escapeHtml(item.textBody || 'Imagem')}"></a>${item.textBody ? `<p>${escapeHtml(item.textBody)}</p>` : ''}`;
+  if (item.type === 'video') return `<video class="media-preview" src="${url}" controls preload="metadata"></video>${item.textBody ? `<p>${escapeHtml(item.textBody)}</p>` : ''}`;
+  if (item.type === 'audio') return `<audio class="audio-preview" src="${url}" controls preload="metadata"></audio>`;
+  if (item.type === 'document') return `<a class="document-preview" href="${url}" target="_blank"><span>↓</span><div><strong>Baixar documento</strong><small>${escapeHtml(item.textBody || 'Arquivo recebido')}</small></div></a>`;
+  if (item.type === 'location' && content.location) { const { latitude, longitude, name, address } = content.location; return `<a class="document-preview" href="https://maps.google.com/?q=${encodeURIComponent(`${latitude},${longitude}`)}" target="_blank" rel="noopener"><span>⌖</span><div><strong>${escapeHtml(name || 'Localização')}</strong><small>${escapeHtml(address || `${latitude}, ${longitude}`)}</small></div></a>`; }
+  if (item.type === 'contacts' && Array.isArray(content.contacts)) return content.contacts.map(contact => `<div class="document-preview"><span>◉</span><div><strong>${escapeHtml(contact.name?.formatted_name || 'Contato')}</strong><small>Contato compartilhado</small></div></div>`).join('');
+  return `<p>${escapeHtml(item.textBody || `[${item.type}]`)}</p>`;
+}
 
 async function init() {
   state.user = (await api('/api/auth/me')).user;
@@ -62,7 +73,7 @@ async function loadMessages() {
   const data = await api(`/api/conversations/${state.active.id}/messages`);
   $('#message-list').innerHTML = data.items.length ? data.items.map(item => `
     <div class="message-row ${item.direction}"><article class="bubble">
-      ${item.senderName ? `<small>${escapeHtml(item.senderName)}</small>` : ''}<p>${escapeHtml(item.textBody || `[${item.type}]`)}</p>
+      ${item.senderName ? `<small>${escapeHtml(item.senderName)}</small>` : ''}${messageContent(item)}
       <footer><time>${time(item.createdAt)}</time>${item.direction === 'outbound' ? `<span class="message-status ${item.status}">${statusIcon(item.status)}</span>` : ''}</footer>
     </article></div>`).join('') : '<div class="empty">Ainda não há mensagens.</div>';
   $('#message-list').scrollTop = $('#message-list').scrollHeight;
@@ -112,7 +123,21 @@ $('#message').addEventListener('keydown', event => { if (event.key === 'Enter' &
 $('#mobile-back').addEventListener('click', () => $('.app-shell').classList.remove('chat-open'));
 $('#quick-replies-button').addEventListener('click', () => $('#quick-replies-popover').classList.toggle('hidden'));
 $('#quick-replies-popover').addEventListener('click', event => { const button = event.target.closest('[data-quick-id]'); if (!button) return; const item = state.quickReplies.find(reply => reply.id === button.dataset.quickId); if (item) { $('#message').value = item.body; $('#message').focus(); } $('#quick-replies-popover').classList.add('hidden'); });
-$('#template-button').addEventListener('click', () => { if (state.active) openDialog('template-dialog'); });
+$('#template-button').addEventListener('click', async () => {
+  if (!state.active) return; openDialog('template-dialog'); $('#template-error').textContent = '';
+  try {
+    const data = await api('/api/templates'); state.templates = data.items;
+    $('#template-select').innerHTML = '<option value="">Selecione um template</option>' + state.templates.map((item, index) => `<option value="${index}">${escapeHtml(item.name)} · ${escapeHtml(item.language)} · ${escapeHtml(item.category)}</option>`).join('');
+  } catch (error) { $('#template-error').textContent = error.message; }
+});
+$('#attach-button').addEventListener('click', () => { if (state.active && windowOpen(state.active)) $('#media-input').click(); else toast('A janela de atendimento está encerrada.'); });
+$('#media-input').addEventListener('change', async event => {
+  const file = event.target.files?.[0]; if (!file || !state.active) return;
+  const form = new FormData(); form.append('file', file); const caption = $('#message').value.trim(); if (caption) form.append('caption', caption);
+  $('#attach-button').disabled = true;
+  try { await api(`/api/conversations/${state.active.id}/media`, { method: 'POST', body: form }); $('#message').value = ''; await Promise.all([loadMessages(), loadConversations()]); toast('Arquivo enviado.'); }
+  catch (error) { toast(error.message); } finally { event.target.value = ''; $('#attach-button').disabled = false; }
+});
 $('#add-note').addEventListener('click', () => { if (state.active) openDialog('note-dialog'); });
 $('#add-tag').addEventListener('click', () => { if (state.active) openDialog('tag-dialog'); });
 $('#edit-contact').addEventListener('click', () => { if (!state.active) return; $('#contact-name').value = displayName(state.active); openDialog('contact-dialog'); });
@@ -122,7 +147,31 @@ $('#note-form').addEventListener('submit', async event => { event.preventDefault
 $('#tag-form').addEventListener('submit', async event => { event.preventDefault(); const name = $('#tag-name').value.trim().toLowerCase(); const names = [...new Set([...state.tags.map(tag => tag.name), name])]; await api(`/api/conversations/${state.active.id}/tags`, { method: 'PUT', body: JSON.stringify({ names }) }); $('#tag-name').value = ''; closeDialog('tag-dialog'); await Promise.all([loadTags(), loadConversations()]); toast('Etiqueta adicionada.'); });
 $('#tag-list').addEventListener('click', async event => { const button = event.target.closest('[data-remove-tag]'); if (!button) return; const names = state.tags.map(tag => tag.name).filter(name => name !== button.dataset.removeTag); await api(`/api/conversations/${state.active.id}/tags`, { method: 'PUT', body: JSON.stringify({ names }) }); await Promise.all([loadTags(), loadConversations()]); });
 $('#contact-form').addEventListener('submit', async event => { event.preventDefault(); await api(`/api/conversations/${state.active.id}/contact`, { method: 'PATCH', body: JSON.stringify({ name: $('#contact-name').value }) }); closeDialog('contact-dialog'); await loadConversations(); await openConversation(state.active.id); toast('Contato atualizado.'); });
-$('#template-form').addEventListener('submit', async event => { event.preventDefault(); $('#template-error').textContent = ''; try { await api(`/api/conversations/${state.active.id}/templates`, { method: 'POST', body: JSON.stringify({ name: $('#template-name').value, language: $('#template-language').value, components: [] }) }); closeDialog('template-dialog'); $('#template-name').value = ''; await loadMessages(); toast('Template enviado.'); } catch (error) { $('#template-error').textContent = error.message; } });
+$('#template-select').addEventListener('change', event => renderTemplateForm(event.target.value === '' ? null : state.templates[Number(event.target.value)]));
+$('#template-form').addEventListener('submit', async event => {
+  event.preventDefault(); $('#template-error').textContent = ''; const selectedIndex = $('#template-select').value; const template = selectedIndex === '' ? null : state.templates[Number(selectedIndex)];
+  if (!template) return ($('#template-error').textContent = 'Selecione um template.');
+  const components = [...document.querySelectorAll('[data-template-component]')].reduce((items, input) => {
+    const type = input.dataset.templateComponent.toLowerCase(); let component = items.find(item => item.type === type);
+    if (!component) { component = { type, parameters: [] }; items.push(component); }
+    component.parameters.push({ type: 'text', text: input.value }); return items;
+  }, []);
+  try { await api(`/api/conversations/${state.active.id}/templates`, { method: 'POST', body: JSON.stringify({ name: template.name, language: template.language, components }) }); closeDialog('template-dialog'); await loadMessages(); toast('Template enviado.'); }
+  catch (error) { $('#template-error').textContent = error.message; }
+});
+
+function renderTemplateForm(template) {
+  if (!template) { $('#template-preview').classList.add('hidden'); $('#template-variables').innerHTML = ''; return; }
+  const body = template.components?.find(component => component.type === 'BODY')?.text || '';
+  $('#template-preview').textContent = body || `Template ${template.name}`; $('#template-preview').classList.remove('hidden');
+  const fields = [];
+  for (const component of template.components || []) {
+    if (!['BODY', 'HEADER'].includes(component.type) || typeof component.text !== 'string') continue;
+    const indexes = [...component.text.matchAll(/\{\{(\d+)\}\}/g)].map(match => Number(match[1]));
+    for (const index of [...new Set(indexes)].sort((a, b) => a - b)) fields.push(`<label>Variável ${index} · ${component.type.toLowerCase()}<input data-template-component="${component.type}" data-variable-index="${index}" required placeholder="Valor de {{${index}}}"></label>`);
+  }
+  $('#template-variables').innerHTML = fields.join('');
+}
 
 function connectEvents() {
   const source = new EventSource('/api/events');

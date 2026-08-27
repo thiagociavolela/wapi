@@ -13,7 +13,9 @@
     "test:watch": "vitest",
     "db:migrate": "tsx src/database/migrate.ts"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "argon2": "^0.44.0",
     "cookie-parser": "^1.4.7",
@@ -21,6 +23,7 @@
     "express": "^5.2.1",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
+    "multer": "^2.2.0",
     "mysql2": "^3.14.5",
     "zod": "^4.1.12"
   },
@@ -28,6 +31,7 @@
     "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.5",
     "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^2.2.0",
     "@types/node": "^24.10.1",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
