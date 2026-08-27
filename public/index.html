@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#11131f">
-  <title>Central de atendimento</title><link rel="stylesheet" href="/css/app.css?v=7">
+  <title>Central de atendimento</title><link rel="stylesheet" href="/css/app.css?v=8">
 </head>
 <body>
   <div class="app-shell">
@@ -29,7 +29,7 @@
       <section id="chat" class="chat hidden">
         <header class="chat-header">
           <button id="mobile-back" class="icon-button mobile-only" aria-label="Voltar"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button>
-          <div class="avatar online" id="chat-avatar"></div><div class="grow"><div class="chat-title-row"><h2 id="chat-name"></h2><span class="official-channel">WhatsApp oficial</span></div><p id="chat-phone" class="muted"></p></div>
+          <div class="avatar online" id="chat-avatar"></div><div class="grow"><div class="chat-title-row"><h2 id="chat-name"></h2><span class="official-channel">WhatsApp oficial</span></div><p class="chat-subtitle"><span id="chat-phone" class="muted"></span><span class="chat-subtitle-dot"></span><span>Cloud API conectada</span></p></div>
           <div class="header-controls"><span id="window-badge" class="badge"></span>
             <label class="select-wrap"><span>Status</span><select id="status"><option value="new">Nova</option><option value="open">Em atendimento</option><option value="pending">Pendente</option><option value="resolved">Resolvida</option></select></label>
             <button id="assign" class="primary compact">Assumir conversa</button>
