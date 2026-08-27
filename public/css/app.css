@@ -61,3 +61,64 @@
   .composer textarea{font-size:16px}
   .quick-popover{left:8px;right:8px;bottom:75px;width:auto}
 }
+
+/* Readable typography scale */
+body{font-size:14px}
+.eyebrow{font-size:11px}
+.connection-pill{font-size:11px}
+.inbox-summary{font-size:12px}
+.search input{font-size:14px}
+.search kbd{font-size:10px}
+.filter{font-size:12px}
+.conversation{padding-top:15px;padding-bottom:15px}
+.conversation-top strong{font-size:13px}
+.conversation-top time{font-size:10px}
+.conversation-bottom{font-size:11px;line-height:1.45}
+.conversation-bottom b{font-size:10px}
+.avatar{font-size:13px}
+.empty{font-size:13px}
+.chat-header h2{font-size:16px}
+.chat-header p{font-size:12px}
+.official-channel{font-size:10px}
+.badge{font-size:10px}
+.select-wrap>span{font-size:9px}
+.select-wrap select{font-size:12px}
+.compact{font-size:12px}
+.message-day{font-size:10px}
+.bubble p{font-size:14px;line-height:1.6}
+.bubble small{font-size:11px}
+.bubble footer{font-size:10px}
+.message-status{font-size:11px}
+.composer textarea{font-size:14px}
+.composer-hint{font-size:10px}
+.composer-alert{font-size:12px}
+.details-heading h2{font-size:17px}
+.contact-profile h2{font-size:16px}
+.contact-profile>p{font-size:12px}
+.channel-badge{font-size:10px}
+.detail-label,.detail-label button{font-size:10px}
+.agent-row p{font-size:12px}
+.mini-avatar{font-size:10px}
+.window-card p{font-size:11px}
+.detail-empty{font-size:11px}
+.routing-grid label{font-size:9px}
+.routing-grid select{font-size:11px}
+.tag-chip{font-size:11px}
+.note-card p{font-size:11px}
+.note-card footer{font-size:10px}
+.quick-reply strong{font-size:12px}
+.quick-reply small{font-size:11px}
+.quick-reply code{font-size:10px}
+.document-preview strong{font-size:12px}
+.document-preview small{font-size:11px}
+.modal-description,.modal label{font-size:12px}
+.modal-actions .primary,.modal-actions .ghost{font-size:12px}
+
+@media(max-width:760px){
+  .chat-header h2{font-size:15px}
+  .chat-header p{font-size:11px}
+  .bubble p{font-size:14px}
+  .bubble footer{font-size:10px}
+  .conversation-top strong{font-size:14px}
+  .conversation-bottom{font-size:12px}
+}
