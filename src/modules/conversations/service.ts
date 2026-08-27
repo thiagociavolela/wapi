@@ -12,7 +12,7 @@ export async function defaultOrganizationId() {
   return String(rows[0].id);
 }
 
-export async function listConversations(organizationId: string, search = "") {
+export async function listConversations(organizationId: string, search = "", status?: "new" | "open" | "pending" | "resolved") {
   const term = `%${search.trim()}%`;
   const [rows] = await pool.execute<RowDataPacket[]>(`
     SELECT c.id, c.status, c.priority, c.unread_count AS unreadCount,
@@ -26,9 +26,9 @@ export async function listConversations(organizationId: string, search = "") {
     JOIN contacts ct ON ct.id = c.contact_id
     LEFT JOIN users u ON u.id = c.assigned_user_id
     LEFT JOIN teams t ON t.id = c.team_id
-    WHERE c.organization_id = ? AND (? = '%%' OR ct.name LIKE ? OR ct.profile_name LIKE ? OR ct.phone LIKE ?)
+    WHERE c.organization_id = ? AND (? = '' OR c.status = ?) AND (? = '%%' OR ct.name LIKE ? OR ct.profile_name LIKE ? OR ct.phone LIKE ?)
     ORDER BY c.last_message_at DESC, c.created_at DESC LIMIT 100`,
-    [organizationId, term, term, term, term]
+    [organizationId, status || "", status || "", term, term, term, term]
   );
   return rows;
 }

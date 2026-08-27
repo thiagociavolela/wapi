@@ -17,7 +17,10 @@ const mediaUpload = multer({
 apiRouter.use(requireAuth);
 
 apiRouter.get("/status", (_req, res) => res.json({ ok: true, metaConfigured: isMetaConfigured() }));
-apiRouter.get("/conversations", async (req, res) => res.json({ items: await listConversations(req.auth!.organizationId, String(req.query.search ?? "")) }));
+apiRouter.get("/conversations", async (req, res) => {
+  const status = z.enum(["new", "open", "pending", "resolved"]).optional().catch(undefined).parse(req.query.status || undefined);
+  res.json({ items: await listConversations(req.auth!.organizationId, String(req.query.search ?? ""), status) });
+});
 apiRouter.get("/conversations/:id/messages", async (req, res) => res.json(await getMessages(req.auth!.organizationId, String(req.params.id), req.query.before ? String(req.query.before) : undefined)));
 apiRouter.post("/conversations/:id/read", async (req, res) => res.json({ ok: await markConversationRead(req.auth!.organizationId, String(req.params.id)) }));
 apiRouter.get("/users", async (req, res) => res.json({ items: await listUsers(req.auth!.organizationId) }));

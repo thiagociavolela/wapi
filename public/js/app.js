@@ -39,10 +39,10 @@ async function init() {
 }
 
 async function loadConversations(preserve = true) {
-  const data = await api(`/api/conversations?search=${encodeURIComponent($('#search').value)}`);
+  const data = await api(`/api/conversations?search=${encodeURIComponent($('#search').value)}&status=${encodeURIComponent(state.status)}`);
   $('#total-count').textContent = data.items.length;
   $('#unread-count').textContent = data.items.reduce((total, item) => total + Number(item.unreadCount || 0), 0);
-  state.conversations = data.items.filter(item => !state.status || item.status === state.status);
+  state.conversations = data.items;
   renderConversations();
   if (preserve && state.active) state.active = state.conversations.find(item => item.id === state.active.id) || state.active;
 }
