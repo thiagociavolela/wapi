@@ -7,16 +7,42 @@ import { defaultOrganizationId } from "../conversations/service.js";
 type Json = Record<string, any>;
 
 export async function processWebhook(payload: Json) {
+  const rawEventKey = `callback:${crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex")}`;
+  await pool.execute(
+    "INSERT IGNORE INTO webhook_events (id, deduplication_key, payload) VALUES (?, ?, ?)",
+    [crypto.randomUUID(), rawEventKey, JSON.stringify(payload)]
+  );
+
+  const changes = extractChanges(payload);
+  const summary = changes.map((change) => ({
+    field: change?.field ?? "unknown",
+    messages: Array.isArray(change?.value?.messages) ? change.value.messages.length : 0,
+    statuses: Array.isArray(change?.value?.statuses) ? change.value.statuses.length : 0
+  }));
+  console.log("Webhook Meta recebido:", JSON.stringify(summary));
+
   const organizationId = await defaultOrganizationId();
-  for (const change of extractChanges(payload)) {
-    const value = change.value ?? {};
-    const profileByWaId = new Map<string, string | undefined>(
-      (value.contacts ?? []).map((contact: Json) => [String(contact.wa_id), contact.profile?.name])
-    );
-    for (const message of value.messages ?? []) {
-      await processInbound(organizationId, message, profileByWaId.get(String(message.from)));
+  try {
+    for (const change of changes) {
+      const value = change.value ?? {};
+      const profileByWaId = new Map<string, string | undefined>(
+        (value.contacts ?? []).map((contact: Json) => [String(contact.wa_id), contact.profile?.name])
+      );
+      for (const message of value.messages ?? []) {
+        await processInbound(organizationId, message, profileByWaId.get(String(message.from)));
+      }
+      for (const status of value.statuses ?? []) await processStatus(organizationId, status);
     }
-    for (const status of value.statuses ?? []) await processStatus(organizationId, status);
+    await pool.execute(
+      "UPDATE webhook_events SET status = 'processed', processed_at = NOW(3) WHERE deduplication_key = ?",
+      [rawEventKey]
+    );
+  } catch (error) {
+    await pool.execute(
+      "UPDATE webhook_events SET status = 'failed', error_message = ? WHERE deduplication_key = ?",
+      [error instanceof Error ? error.message : "Falha desconhecida", rawEventKey]
+    );
+    throw error;
   }
 }
 
