@@ -74,7 +74,9 @@ async function processInbound(organizationId: string, message: Json, profileName
       "SELECT id FROM conversations WHERE organization_id = ? AND contact_id = ? LIMIT 1", [organizationId, contactId]);
     const conversationId = conversations[0]?.id ? String(conversations[0].id) : crypto.randomUUID();
     if (!conversations[0]) {
-      await connection.execute("INSERT INTO conversations (id, organization_id, contact_id) VALUES (?, ?, ?)", [conversationId, organizationId, contactId]);
+      await connection.execute(`INSERT INTO conversations (id, organization_id, contact_id, first_response_due_at, resolution_due_at)
+        SELECT ?, ?, ?, DATE_ADD(NOW(3), INTERVAL COALESCE(s.first_response_minutes, 15) MINUTE), DATE_ADD(NOW(3), INTERVAL COALESCE(s.resolution_minutes, 480) MINUTE)
+        FROM organizations o LEFT JOIN sla_policies s ON s.organization_id = o.id WHERE o.id = ?`, [conversationId, organizationId, contactId, organizationId]);
     }
     const text = extractText(message);
     await connection.execute(`INSERT IGNORE INTO messages

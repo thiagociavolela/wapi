@@ -14,6 +14,11 @@ Projeto independente em Node.js, TypeScript, HTML, CSS e JavaScript para atendim
 - Caixa de entrada responsiva em HTML/CSS/JavaScript puro.
 - Atribuição, estados de conversa, não lidas e atualização ao vivo por SSE.
 - Distribuição de conversas entre atendentes ativos.
+- Equipes e setores com membros próprios.
+- Prioridades baixa, normal, alta e urgente.
+- SLA configurável de primeira resposta e resolução.
+- Dashboard operacional por atendente e equipe.
+- Administração de usuários com papéis `admin`, `supervisor` e `agent`.
 - Notas internas com autoria e auditoria.
 - Etiquetas comerciais por conversa.
 - Respostas rápidas com atalhos pré-configurados.

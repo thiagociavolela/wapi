@@ -1,7 +1,7 @@
 import { api } from './api.js';
 
 const $ = (selector) => document.querySelector(selector);
-const state = { user: null, users: [], quickReplies: [], templates: [], tags: [], conversations: [], active: null, status: '', searchTimer: null };
+const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], active: null, status: '', searchTimer: null };
 
 function escapeHtml(value = '') { const node = document.createElement('div'); node.textContent = String(value); return node.innerHTML; }
 function initials(name = '?') { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase(); }
@@ -23,9 +23,9 @@ function messageContent(item) {
 
 async function init() {
   state.user = (await api('/api/auth/me')).user;
-  const [users, quickReplies] = await Promise.all([api('/api/users'), api('/api/quick-replies')]);
-  state.users = users.items; state.quickReplies = quickReplies.items;
-  renderAgentOptions(); renderQuickReplies(); await loadConversations(); connectEvents();
+  const [users, teams, quickReplies] = await Promise.all([api('/api/users'), api('/api/management/teams'), api('/api/quick-replies')]);
+  state.users = users.items; state.teams = teams.items; state.quickReplies = quickReplies.items;
+  renderAgentOptions(); renderTeamOptions(); renderQuickReplies(); await loadConversations(); connectEvents();
 }
 
 async function loadConversations(preserve = true) {
@@ -59,6 +59,7 @@ async function openConversation(id) {
   $('#detail-agent').textContent = state.active.assignedUserName || 'Não atribuído';
   $('#assign').textContent = state.active.assignedUserName ? 'Reatribuir' : 'Assumir conversa';
   $('#status').value = state.active.status;
+  $('#team-select').value = state.active.teamId || ''; $('#priority-select').value = state.active.priority || 'normal';
   updateWindow(); await Promise.all([loadMessages(), loadNotes(), loadTags(), api(`/api/conversations/${id}/read`, { method: 'POST' })]);
 }
 
@@ -84,6 +85,10 @@ function toast(message) { $('#toast').textContent = message; $('#toast').classLi
 
 function renderAgentOptions() {
   $('#agent-select').innerHTML = `<option value="">Não atribuído</option>${state.users.map(user => `<option value="${user.id}">${escapeHtml(user.name)} · ${escapeHtml(user.role)}</option>`).join('')}`;
+}
+
+function renderTeamOptions() {
+  $('#team-select').innerHTML = '<option value="">Sem equipe</option>' + state.teams.filter(team => team.active).map(team => `<option value="${team.id}">${escapeHtml(team.name)}</option>`).join('');
 }
 
 function renderQuickReplies() {
@@ -117,6 +122,8 @@ $('#composer').addEventListener('submit', async event => {
 $('#assign').addEventListener('click', () => { if (!state.active) return; const assigned = state.users.find(user => user.name === state.active.assignedUserName); $('#agent-select').value = assigned?.id || state.user.id; openDialog('assign-dialog'); });
 $('#detail-assign-shortcut').addEventListener('click', () => $('#assign').click());
 $('#status').addEventListener('change', async event => { await api(`/api/conversations/${state.active.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: event.target.value }) }); await loadConversations(); });
+$('#team-select').addEventListener('change', async event => { await api(`/api/conversations/${state.active.id}/routing`, { method: 'PATCH', body: JSON.stringify({ teamId: event.target.value || null }) }); await loadConversations(); toast('Equipe atualizada.'); });
+$('#priority-select').addEventListener('change', async event => { await api(`/api/conversations/${state.active.id}/routing`, { method: 'PATCH', body: JSON.stringify({ priority: event.target.value }) }); await loadConversations(); toast('Prioridade atualizada.'); });
 $('#logout').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); location.href = '/login.html'; });
 $('#message').addEventListener('input', event => { event.target.style.height = 'auto'; event.target.style.height = `${Math.min(event.target.scrollHeight, 140)}px`; });
 $('#message').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); $('#composer').requestSubmit(); } });

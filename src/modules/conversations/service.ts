@@ -15,15 +15,17 @@ export async function defaultOrganizationId() {
 export async function listConversations(organizationId: string, search = "") {
   const term = `%${search.trim()}%`;
   const [rows] = await pool.execute<RowDataPacket[]>(`
-    SELECT c.id, c.status, c.unread_count AS unreadCount,
+    SELECT c.id, c.status, c.priority, c.unread_count AS unreadCount,
       c.service_window_expires_at AS serviceWindowExpiresAt,
+      c.first_response_due_at AS firstResponseDueAt, c.first_response_at AS firstResponseAt, c.resolution_due_at AS resolutionDueAt,
       c.last_message_preview AS lastMessagePreview, c.last_message_at AS lastMessageAt,
       ct.id AS contactId, ct.name, ct.profile_name AS profileName, ct.phone, ct.wa_id AS waId,
-      u.name AS assignedUserName,
+      u.name AS assignedUserName, t.id AS teamId, t.name AS teamName, t.color AS teamColor,
       (SELECT GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR '||') FROM conversation_tags ctag JOIN tags t ON t.id = ctag.tag_id WHERE ctag.conversation_id = c.id) AS tagNames
     FROM conversations c
     JOIN contacts ct ON ct.id = c.contact_id
     LEFT JOIN users u ON u.id = c.assigned_user_id
+    LEFT JOIN teams t ON t.id = c.team_id
     WHERE c.organization_id = ? AND (? = '%%' OR ct.name LIKE ? OR ct.profile_name LIKE ? OR ct.phone LIKE ?)
     ORDER BY c.last_message_at DESC, c.created_at DESC LIMIT 100`,
     [organizationId, term, term, term, term]
@@ -63,7 +65,7 @@ export async function sendAgentText(organizationId: string, userId: string, conv
   try {
     const result = await sendText(String(conversation.waId), body);
     await pool.execute("UPDATE messages SET meta_message_id = ?, status = 'sent', sent_at = NOW(3) WHERE id = ?", [result.messageId, id]);
-    await pool.execute("UPDATE conversations SET last_message_preview = ?, last_message_at = NOW(3), status = 'open' WHERE id = ?", [body.slice(0, 500), conversationId]);
+    await pool.execute("UPDATE conversations SET last_message_preview = ?, last_message_at = NOW(3), status = 'open', first_response_at = COALESCE(first_response_at, NOW(3)) WHERE id = ?", [body.slice(0, 500), conversationId]);
   } catch (error) {
     await pool.execute("UPDATE messages SET status = 'failed', error_message = ? WHERE id = ?", [error instanceof Error ? error.message : "Falha no envio", id]);
     throw error;
@@ -88,7 +90,7 @@ export async function sendAgentTemplate(organizationId: string, userId: string, 
   try {
     const result = await sendTemplate(String(conversation.waId), name, language, components);
     await pool.execute("UPDATE messages SET meta_message_id = ?, status = 'sent', sent_at = NOW(3) WHERE id = ?", [result.messageId, id]);
-    await pool.execute("UPDATE conversations SET last_message_preview = ?, last_message_at = NOW(3), status = 'open' WHERE id = ?", [preview, conversationId]);
+    await pool.execute("UPDATE conversations SET last_message_preview = ?, last_message_at = NOW(3), status = 'open', first_response_at = COALESCE(first_response_at, NOW(3)) WHERE id = ?", [preview, conversationId]);
     await audit(organizationId, userId, "template.sent", "conversation", conversationId, { name, language });
   } catch (error) {
     await pool.execute("UPDATE messages SET status = 'failed', error_message = ? WHERE id = ?", [error instanceof Error ? error.message : "Falha no envio", id]);
@@ -118,7 +120,7 @@ export async function sendAgentMedia(organizationId: string, userId: string, con
     const result = await sendMedia(String(conversation.waId), type, mediaId, input.caption, input.fileName);
     await pool.execute("UPDATE messages SET meta_message_id = ?, content = ?, status = 'sent', sent_at = NOW(3) WHERE id = ?",
       [result.messageId, JSON.stringify({ mediaId, mimeType: input.mimeType, fileName: input.fileName, caption: input.caption ?? null }), id]);
-    await pool.execute("UPDATE conversations SET last_message_preview = ?, last_message_at = NOW(3), status = 'open' WHERE id = ?", [preview.slice(0, 500), conversationId]);
+    await pool.execute("UPDATE conversations SET last_message_preview = ?, last_message_at = NOW(3), status = 'open', first_response_at = COALESCE(first_response_at, NOW(3)) WHERE id = ?", [preview.slice(0, 500), conversationId]);
     await audit(organizationId, userId, "media.sent", "conversation", conversationId, { type, fileName: input.fileName });
   } catch (error) {
     await pool.execute("UPDATE messages SET status = 'failed', error_message = ? WHERE id = ?", [error instanceof Error ? error.message : "Falha no envio", id]);
@@ -215,8 +217,23 @@ export async function assignConversation(organizationId: string, conversationId:
 }
 
 export async function changeStatus(organizationId: string, conversationId: string, status: string) {
-  const [result] = await pool.execute<ResultSetHeader>("UPDATE conversations SET status = ? WHERE id = ? AND organization_id = ?", [status, conversationId, organizationId]);
+  const [result] = await pool.execute<ResultSetHeader>("UPDATE conversations SET status = ?, resolved_at = IF(? = 'resolved', NOW(3), NULL) WHERE id = ? AND organization_id = ?", [status, status, conversationId, organizationId]);
   if (result.affectedRows) publish(organizationId, { type: "conversation", conversationId });
+  return result.affectedRows > 0;
+}
+
+export async function updateConversationRouting(organizationId: string, userId: string, conversationId: string, input: { teamId?: string | null; priority?: string }) {
+  if (input.teamId) {
+    const [teams] = await pool.execute<RowDataPacket[]>("SELECT id FROM teams WHERE id = ? AND organization_id = ? AND active = TRUE", [input.teamId, organizationId]);
+    if (!teams.length) throw new Error("Equipe inválida.");
+  }
+  const assignments: string[] = []; const values: unknown[] = [];
+  if (input.teamId !== undefined) { assignments.push("team_id = ?"); values.push(input.teamId); }
+  if (input.priority !== undefined) { assignments.push("priority = ?"); values.push(input.priority); }
+  if (!assignments.length) return false;
+  values.push(conversationId, organizationId);
+  const [result] = await pool.execute<ResultSetHeader>(`UPDATE conversations SET ${assignments.join(", ")} WHERE id = ? AND organization_id = ?`, values as any[]);
+  if (result.affectedRows) { await audit(organizationId, userId, "conversation.routed", "conversation", conversationId, input); publish(organizationId, { type: "conversation", conversationId }); }
   return result.affectedRows > 0;
 }
 
