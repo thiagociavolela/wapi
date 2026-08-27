@@ -139,6 +139,7 @@ function closeDialog(id) { const dialog = $(`#${id}`); if (dialog.open) dialog.c
 
 $('#conversation-list').addEventListener('click', event => { const button = event.target.closest('[data-id]'); if (button) openConversation(button.dataset.id); });
 $('#search').addEventListener('input', () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(() => loadConversations(false), 300); });
+document.addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); $('#search').focus(); $('#search').select(); } });
 document.querySelectorAll('.filter').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('.filter').forEach(x => x.classList.remove('active')); button.classList.add('active'); state.status = button.dataset.status; loadConversations(false); }));
 $('#composer').addEventListener('submit', async event => {
   event.preventDefault(); const text = $('#message').value.trim(); if (!text || !state.active) return;

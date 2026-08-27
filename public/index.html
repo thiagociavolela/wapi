@@ -20,7 +20,7 @@
     <aside class="inbox-panel">
       <header class="inbox-header"><div><p class="eyebrow">WORKSPACE</p><h1>Atendimento</h1></div><div class="connection-pill"><span></span> Online</div></header>
       <div class="inbox-summary"><span><b id="total-count">0</b> conversas</span><span class="summary-separator"></span><span><b id="unread-count">0</b> não lidas</span></div>
-      <label class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="search" placeholder="Buscar conversa..." autocomplete="off"><kbd>⌘ K</kbd></label>
+      <label class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="search" placeholder="Buscar conversa..." autocomplete="off"><kbd>Ctrl K</kbd></label>
       <div class="filters"><button class="filter" data-status="new">Novas <b class="filter-count" data-count="newCount">0</b></button><button class="filter" data-status="open">Em atendimento <b class="filter-count" data-count="openCount">0</b></button><button class="filter" data-status="resolved">Concluídas <b class="filter-count" data-count="resolvedCount">0</b></button><button class="filter active" data-status="">Todas <b class="filter-count" data-count="total">0</b></button></div>
       <div id="conversation-list" class="conversation-list"><div class="empty">Carregando conversas…</div></div>
     </aside>
@@ -61,5 +61,5 @@
   <dialog id="tag-dialog" class="modal"><form id="tag-form"><div class="modal-head"><div><p class="eyebrow">ORGANIZAÇÃO</p><h2>Adicionar etiqueta</h2></div><button type="button" data-close="tag-dialog">×</button></div><label>Nome<input id="tag-name" maxlength="60" placeholder="ex: cliente vip" required></label><div class="modal-actions"><button type="button" class="ghost" data-close="tag-dialog">Cancelar</button><button class="primary" type="submit">Adicionar</button></div></form></dialog>
   <dialog id="assign-dialog" class="modal"><form id="assign-form"><div class="modal-head"><div><p class="eyebrow">DISTRIBUIÇÃO</p><h2>Atribuir conversa</h2></div><button type="button" data-close="assign-dialog">×</button></div><label>Atendente<select id="agent-select" required></select></label><div class="modal-actions"><button type="button" class="ghost" data-close="assign-dialog">Cancelar</button><button class="primary" type="submit">Confirmar</button></div></form></dialog>
   <dialog id="contact-dialog" class="modal"><form id="contact-form"><div class="modal-head"><div><p class="eyebrow">CONTATO</p><h2>Editar contato</h2></div><button type="button" data-close="contact-dialog">×</button></div><label>Nome<input id="contact-name" maxlength="160" required></label><div class="modal-actions"><button type="button" class="ghost" data-close="contact-dialog">Cancelar</button><button class="primary" type="submit">Salvar</button></div></form></dialog>
-  <div id="toast" class="toast hidden"></div><script type="module" src="/js/app.js?v=10"></script>
+  <div id="toast" class="toast hidden"></div><script type="module" src="/js/app.js?v=11"></script>
 </body></html>
