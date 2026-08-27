@@ -8,6 +8,13 @@ function initials(name = '?') { return name.trim().split(/\s+/).slice(0, 2).map(
 function displayName(item) { return item.name || item.profileName || item.phone || 'Contato'; }
 function time(value) { return value ? new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : ''; }
 function dateTime(value) { return value ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : 'Encerrada'; }
+function dayKey(value) { const date = new Date(value); return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`; }
+function dayLabel(value) {
+  const date = new Date(value); const today = new Date(); const yesterday = new Date(); yesterday.setDate(today.getDate() - 1);
+  if (dayKey(date) === dayKey(today)) return 'Hoje';
+  if (dayKey(date) === dayKey(yesterday)) return 'Ontem';
+  return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'long', year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric' }).format(date);
+}
 function windowOpen(item) { return item?.serviceWindowExpiresAt && new Date(item.serviceWindowExpiresAt) > new Date(); }
 function messageContent(item) {
   const url = `/api/messages/${encodeURIComponent(item.id)}/media`;
@@ -72,15 +79,22 @@ function updateWindow() {
 
 async function loadMessages() {
   const data = await api(`/api/conversations/${state.active.id}/messages`);
-  $('#message-list').innerHTML = data.items.length ? data.items.map(item => `
-    <div class="message-row ${item.direction}"><article class="bubble">
+  let previousDay = ''; let previousDirection = '';
+  $('#message-list').innerHTML = data.items.length ? data.items.map(item => {
+    const currentDay = dayKey(item.createdAt);
+    const separator = currentDay !== previousDay ? `<div class="message-day"><span>${dayLabel(item.createdAt)}</span></div>` : '';
+    const grouped = currentDay === previousDay && item.direction === previousDirection;
+    previousDay = currentDay; previousDirection = item.direction;
+    return `${separator}<div class="message-row ${item.direction} ${grouped ? 'same-author' : 'new-author'}"><article class="bubble">
       ${item.senderName ? `<small>${escapeHtml(item.senderName)}</small>` : ''}${messageContent(item)}
-      <footer><time>${time(item.createdAt)}</time>${item.direction === 'outbound' ? `<span class="message-status ${item.status}">${statusIcon(item.status)}</span>` : ''}</footer>
-    </article></div>`).join('') : '<div class="empty">Ainda não há mensagens.</div>';
+      <footer><time>${time(item.createdAt)}</time>${item.direction === 'outbound' ? `<span class="message-status ${item.status}" title="${statusLabel(item.status)}">${statusIcon(item.status)}</span>` : ''}</footer>
+    </article></div>`;
+  }).join('') : '<div class="empty">Ainda não há mensagens.</div>';
   $('#message-list').scrollTop = $('#message-list').scrollHeight;
 }
 
 function statusIcon(status) { return status === 'read' ? '✓✓' : status === 'delivered' ? '✓✓' : status === 'failed' ? '!' : '✓'; }
+function statusLabel(status) { return ({ sent: 'Enviada', delivered: 'Entregue', read: 'Lida', failed: 'Falha no envio' })[status] || status; }
 function toast(message) { $('#toast').textContent = message; $('#toast').classList.remove('hidden'); setTimeout(() => $('#toast').classList.add('hidden'), 3500); }
 
 function renderAgentOptions() {
