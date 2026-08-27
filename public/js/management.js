@@ -1,10 +1,11 @@
 import { api } from './api.js';
 const $ = selector => document.querySelector(selector);
+const SYSTEM_TIME_ZONE = 'America/Sao_Paulo';
 const state = { me: null, users: [], teams: [] };
 const escapeHtml = value => { const node = document.createElement('div'); node.textContent = String(value ?? ''); return node.innerHTML; };
 const formatSeconds = seconds => !seconds ? 'Sem dados' : seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)} min`;
 const number = value => Number(value || 0);
-const shortTime = value => value ? new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : '—';
+const shortTime = value => value ? new Intl.DateTimeFormat('pt-BR', { timeZone: SYSTEM_TIME_ZONE, hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : '—';
 function toast(message) { $('#toast').textContent = message; $('#toast').classList.remove('hidden'); setTimeout(() => $('#toast').classList.add('hidden'), 3000); }
 function openDialog(id) { $(`#${id}`).showModal(); } function closeDialog(id) { $(`#${id}`).close(); }
 
@@ -35,10 +36,10 @@ async function loadDashboard() {
 }
 
 function renderMessageChart(items, total) {
-  const byDay = new Map(items.map(item => [String(item.day).slice(0, 10), item])); const days = Array.from({ length: 7 }, (_, index) => { const date = new Date(); date.setHours(12, 0, 0, 0); date.setDate(date.getDate() - 6 + index); const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; return { date, ...(byDay.get(key) || { inbound: 0, outbound: 0 }) }; });
+  const byDay = new Map(items.map(item => [String(item.day).slice(0, 10), item])); const keyFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: SYSTEM_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }); const days = Array.from({ length: 7 }, (_, index) => { const date = new Date(Date.now() - (6 - index) * 86400000); const key = keyFormatter.format(date); return { date, ...(byDay.get(key) || { inbound: 0, outbound: 0 }) }; });
   const values = days.flatMap(item => [number(item.inbound), number(item.outbound)]); const max = Math.max(1, ...values);
   $('#messages-week-total').textContent = `${total} mensagens`;
-  $('#message-chart').innerHTML = days.map(item => `<div class="chart-day"><div class="chart-bars"><i class="bar-inbound" style="height:${Math.max(5, number(item.inbound) / max * 100)}%" title="${number(item.inbound)} recebidas"></i><i class="bar-outbound" style="height:${Math.max(5, number(item.outbound) / max * 100)}%" title="${number(item.outbound)} enviadas"></i></div><span>${new Intl.DateTimeFormat('pt-BR', { weekday: 'short' }).format(item.date).replace('.', '')}</span></div>`).join('');
+  $('#message-chart').innerHTML = days.map(item => `<div class="chart-day"><div class="chart-bars"><i class="bar-inbound" style="height:${Math.max(5, number(item.inbound) / max * 100)}%" title="${number(item.inbound)} recebidas"></i><i class="bar-outbound" style="height:${Math.max(5, number(item.outbound) / max * 100)}%" title="${number(item.outbound)} enviadas"></i></div><span>${new Intl.DateTimeFormat('pt-BR', { timeZone: SYSTEM_TIME_ZONE, weekday: 'short' }).format(item.date).replace('.', '')}</span></div>`).join('');
 }
 
 function renderWindowHealth(summary) {

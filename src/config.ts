@@ -1,6 +1,10 @@
 import "dotenv/config";
 import { z } from "zod";
 
+export const SYSTEM_TIME_ZONE = "America/Sao_Paulo";
+export const MYSQL_TIME_ZONE = "-03:00";
+process.env.TZ = SYSTEM_TIME_ZONE;
+
 const booleanValue = z.string().default("false").transform((value) => value === "true");
 
 const schema = z.object({

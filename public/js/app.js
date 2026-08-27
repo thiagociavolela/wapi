@@ -1,19 +1,20 @@
 import { api } from './api.js';
 
 const $ = (selector) => document.querySelector(selector);
+const SYSTEM_TIME_ZONE = 'America/Sao_Paulo';
 const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], active: null, status: 'new', searchTimer: null };
 
 function escapeHtml(value = '') { const node = document.createElement('div'); node.textContent = String(value); return node.innerHTML; }
 function initials(name = '?') { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase(); }
 function displayName(item) { return item.name || item.profileName || item.phone || 'Contato'; }
-function time(value) { return value ? new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : ''; }
-function dateTime(value) { return value ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : 'Encerrada'; }
-function dayKey(value) { const date = new Date(value); return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`; }
+function time(value) { return value ? new Intl.DateTimeFormat('pt-BR', { timeZone: SYSTEM_TIME_ZONE, hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : ''; }
+function dateTime(value) { return value ? new Intl.DateTimeFormat('pt-BR', { timeZone: SYSTEM_TIME_ZONE, dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : 'Encerrada'; }
+function dayKey(value) { return new Intl.DateTimeFormat('en-CA', { timeZone: SYSTEM_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(value)); }
 function dayLabel(value) {
-  const date = new Date(value); const today = new Date(); const yesterday = new Date(); yesterday.setDate(today.getDate() - 1);
+  const date = new Date(value); const today = new Date(); const yesterday = new Date(Date.now() - 86400000);
   if (dayKey(date) === dayKey(today)) return 'Hoje';
   if (dayKey(date) === dayKey(yesterday)) return 'Ontem';
-  return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'long', year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric' }).format(date);
+  return new Intl.DateTimeFormat('pt-BR', { timeZone: SYSTEM_TIME_ZONE, day: '2-digit', month: 'long', year: dayKey(date).slice(0, 4) === dayKey(today).slice(0, 4) ? undefined : 'numeric' }).format(date);
 }
 function windowOpen(item) { return item?.serviceWindowExpiresAt && new Date(item.serviceWindowExpiresAt) > new Date(); }
 function messageContent(item) {
