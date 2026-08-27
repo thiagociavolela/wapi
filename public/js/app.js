@@ -32,7 +32,10 @@ async function init() {
   state.user = (await api('/api/auth/me')).user;
   const [users, teams, quickReplies] = await Promise.all([api('/api/users'), api('/api/management/teams'), api('/api/quick-replies')]);
   state.users = users.items; state.teams = teams.items; state.quickReplies = quickReplies.items;
-  renderAgentOptions(); renderTeamOptions(); renderQuickReplies(); await loadConversations(); connectEvents();
+  renderAgentOptions(); renderTeamOptions(); renderQuickReplies(); await loadConversations();
+  const requestedConversation = new URLSearchParams(location.search).get('conversation');
+  if (requestedConversation && state.conversations.some(item => item.id === requestedConversation)) await openConversation(requestedConversation);
+  connectEvents();
 }
 
 async function loadConversations(preserve = true) {

@@ -3,6 +3,8 @@ const $ = selector => document.querySelector(selector);
 const state = { me: null, users: [], teams: [] };
 const escapeHtml = value => { const node = document.createElement('div'); node.textContent = String(value ?? ''); return node.innerHTML; };
 const formatSeconds = seconds => !seconds ? 'Sem dados' : seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)} min`;
+const number = value => Number(value || 0);
+const shortTime = value => value ? new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : '—';
 function toast(message) { $('#toast').textContent = message; $('#toast').classList.remove('hidden'); setTimeout(() => $('#toast').classList.add('hidden'), 3000); }
 function openDialog(id) { $(`#${id}`).showModal(); } function closeDialog(id) { $(`#${id}`).close(); }
 
@@ -16,12 +18,45 @@ async function init() {
 async function loadDashboard() {
   const data = await api('/api/management/dashboard'); const s = data.summary || {};
   $('#metric-grid').innerHTML = [
-    ['Conversas ativas', Number(s.newCount || 0) + Number(s.openCount || 0) + Number(s.pendingCount || 0), `${s.unreadCount || 0} mensagens não lidas`, ''],
-    ['Novas', s.newCount || 0, 'Aguardando atendimento', ''], ['SLA vencido', s.slaBreached || 0, 'Primeira resposta atrasada', 'danger'],
-    ['Resposta média', formatSeconds(data.averageFirstResponseSeconds), 'Tempo até primeira resposta', '']
-  ].map(([label, value, help, kind]) => `<article class="metric-card ${kind}"><span>${label}</span><strong>${value}</strong><small>${help}</small></article>`).join('');
+    ['Conversas ativas', number(s.newCount) + number(s.openCount) + number(s.pendingCount), `${number(s.unreadCount)} mensagens não lidas`, 'purple', '⌁'],
+    ['Janelas abertas', number(s.windowOpenCount), 'Resposta livre disponível', 'green', '◷'],
+    ['Próximas do vencimento', number(s.windowExpiringCount), 'Expiram nas próximas 2 horas', 'amber', '⌛'],
+    ['Janelas encerradas', number(s.windowExpiredCount), 'Exigem template aprovado', 'neutral', '⊘'],
+    ['Novas conversas', number(s.newCount), 'Aguardando atendimento', 'purple', '+'],
+    ['SLA vencido', number(s.slaBreached), 'Primeira resposta atrasada', 'danger', '!'],
+    ['Sem responsável', number(s.unassignedCount), 'Conversas não atribuídas', 'amber', '◇'],
+    ['Resposta média', formatSeconds(data.averageFirstResponseSeconds), `${number(data.messageSummary?.messagesToday)} mensagens hoje`, 'green', '↗']
+  ].map(([label, value, help, kind, icon]) => `<article class="metric-card ${kind}"><div class="metric-top"><span>${label}</span><i>${icon}</i></div><strong>${value}</strong><small>${help}</small></article>`).join('');
+  renderMessageChart(data.dailyMessages || [], number(data.messageSummary?.messagesSevenDays));
+  renderWindowHealth(s); renderDistributions(s, data.priorities || []); renderAttention(data.recent || []);
   $('#agent-performance').innerHTML = data.agents.length ? data.agents.map(agent => `<div class="data-row"><div><strong>${escapeHtml(agent.name)}</strong><small>${agent.conversations} conversas</small></div><div class="data-number"><strong>${agent.openCount || 0}</strong><small>abertas</small></div><div class="data-number"><strong>${agent.slaBreached || 0}</strong><small>SLA</small></div></div>`).join('') : '<div class="empty">Sem atendentes.</div>';
   $('#team-performance').innerHTML = data.teams.length ? data.teams.map(team => `<div class="data-row"><div><strong><i class="team-color" style="background:${team.color}"></i> ${escapeHtml(team.name)}</strong><small>${team.conversations} conversas</small></div><div class="data-number"><strong>${team.activeCount || 0}</strong><small>ativas</small></div></div>`).join('') : '<div class="empty">Sem equipes.</div>';
+  $('#dashboard-updated').textContent = `Atualizado às ${shortTime(data.generatedAt)}`;
+}
+
+function renderMessageChart(items, total) {
+  const byDay = new Map(items.map(item => [String(item.day).slice(0, 10), item])); const days = Array.from({ length: 7 }, (_, index) => { const date = new Date(); date.setHours(12, 0, 0, 0); date.setDate(date.getDate() - 6 + index); const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; return { date, ...(byDay.get(key) || { inbound: 0, outbound: 0 }) }; });
+  const values = days.flatMap(item => [number(item.inbound), number(item.outbound)]); const max = Math.max(1, ...values);
+  $('#messages-week-total').textContent = `${total} mensagens`;
+  $('#message-chart').innerHTML = days.map(item => `<div class="chart-day"><div class="chart-bars"><i class="bar-inbound" style="height:${Math.max(5, number(item.inbound) / max * 100)}%" title="${number(item.inbound)} recebidas"></i><i class="bar-outbound" style="height:${Math.max(5, number(item.outbound) / max * 100)}%" title="${number(item.outbound)} enviadas"></i></div><span>${new Intl.DateTimeFormat('pt-BR', { weekday: 'short' }).format(item.date).replace('.', '')}</span></div>`).join('');
+}
+
+function renderWindowHealth(summary) {
+  const open = number(summary.windowOpenCount), expiring = number(summary.windowExpiringCount), expired = number(summary.windowExpiredCount), total = Math.max(1, open + expired);
+  const openPercent = Math.round(open / total * 100), stable = Math.max(0, open - expiring), stablePercent = stable / total * 100, warningPercent = expiring / total * 100;
+  $('#window-health').innerHTML = `<div class="health-ring" style="--open:${stablePercent * 3.6}deg;--warning:${Math.min(360, (stablePercent + warningPercent) * 3.6)}deg"><div><strong>${openPercent}%</strong><span>abertas</span></div></div><div class="health-list"><p><i class="green"></i><span>Abertas</span><strong>${open}</strong></p><p><i class="amber"></i><span>Vencem em até 2h</span><strong>${expiring}</strong></p><p><i class="gray"></i><span>Encerradas</span><strong>${expired}</strong></p></div>`;
+}
+
+function distributionRow(label, value, total, kind) { return `<div class="distribution-row"><div><span>${label}</span><strong>${value}</strong></div><div class="progress"><i class="${kind}" style="width:${total ? Math.max(3, value / total * 100) : 0}%"></i></div></div>`; }
+function renderDistributions(summary, priorities) {
+  const statuses = [['Novas', number(summary.newCount), 'purple'], ['Em atendimento', number(summary.openCount), 'green'], ['Pendentes', number(summary.pendingCount), 'amber'], ['Resolvidas', number(summary.resolvedCount), 'gray']]; const statusTotal = statuses.reduce((sum, item) => sum + item[1], 0);
+  $('#status-distribution').innerHTML = statuses.map(item => distributionRow(item[0], item[1], statusTotal, item[2])).join('');
+  const priorityMap = Object.fromEntries(priorities.map(item => [item.priority, number(item.total)])); const priorityItems = [['Urgente', priorityMap.urgent || 0, 'danger'], ['Alta', priorityMap.high || 0, 'amber'], ['Normal', priorityMap.normal || 0, 'purple'], ['Baixa', priorityMap.low || 0, 'green']]; const priorityTotal = priorityItems.reduce((sum, item) => sum + item[1], 0);
+  $('#priority-distribution').innerHTML = priorityItems.map(item => distributionRow(item[0], item[1], priorityTotal, item[2])).join('');
+}
+
+function renderAttention(items) {
+  $('#attention-list').innerHTML = items.length ? items.map(item => { const open = item.serviceWindowExpiresAt && new Date(item.serviceWindowExpiresAt) > new Date(); return `<a class="attention-row" href="/?conversation=${item.id}"><span class="attention-avatar">${escapeHtml((item.contactName || '?').slice(0, 2).toUpperCase())}</span><span class="attention-contact"><strong>${escapeHtml(item.contactName)}</strong><small>${escapeHtml(item.phone)}</small></span><span class="priority-pill ${item.priority}">${escapeHtml(item.priority)}</span><span class="window-pill ${open ? 'open' : 'closed'}">${open ? `Aberta até ${shortTime(item.serviceWindowExpiresAt)}` : 'Janela encerrada'}</span><span class="attention-agent">${escapeHtml(item.assignedUserName || 'Não atribuído')}</span>${number(item.unreadCount) ? `<b class="attention-unread">${number(item.unreadCount)}</b>` : ''}</a>`; }).join('') : '<div class="empty">Nenhuma conversa exige atenção.</div>';
 }
 
 async function loadUsers() {
@@ -45,4 +80,5 @@ $('#user-form').addEventListener('submit', async event => { event.preventDefault
 $('#users-table').addEventListener('click', async event => { const button = event.target.closest('[data-toggle-user]'); if (!button) return; try { await api(`/api/management/users/${button.dataset.toggleUser}`, { method: 'PATCH', body: JSON.stringify({ active: button.dataset.active !== '1' }) }); await loadUsers(); toast('Usuário atualizado.'); } catch (error) { toast(error.message); } });
 $('#team-form').addEventListener('submit', async event => { event.preventDefault(); const memberIds = [...document.querySelectorAll('#team-members input:checked')].map(input => input.value); try { await api('/api/management/teams', { method: 'POST', body: JSON.stringify({ name: $('#team-name').value, color: $('#team-color').value, memberIds }) }); event.target.reset(); $('#team-color').value = '#6657e8'; closeDialog('team-dialog'); await Promise.all([loadTeams(), loadDashboard()]); toast('Equipe criada.'); } catch (error) { toast(error.message); } });
 $('#sla-form').addEventListener('submit', async event => { event.preventDefault(); try { await api('/api/management/sla', { method: 'PUT', body: JSON.stringify({ firstResponseMinutes: Number($('#sla-first').value), resolutionMinutes: Number($('#sla-resolution').value) }) }); toast('Política de SLA atualizada.'); } catch (error) { toast(error.message); } });
+$('#refresh-dashboard').addEventListener('click', async event => { event.currentTarget.disabled = true; try { await loadDashboard(); toast('Indicadores atualizados.'); } catch (error) { toast(error.message); } finally { event.currentTarget.disabled = false; } });
 init().catch(error => toast(error.message));
