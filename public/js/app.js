@@ -141,6 +141,13 @@ $('#conversation-list').addEventListener('click', event => { const button = even
 $('#search').addEventListener('input', () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(() => loadConversations(false), 300); });
 document.addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); $('#search').focus(); $('#search').select(); } });
 document.querySelectorAll('.filter').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('.filter').forEach(x => x.classList.remove('active')); button.classList.add('active'); state.status = button.dataset.status; loadConversations(false); }));
+const filterStrip = $('.filters'); let filterDrag = null; let suppressFilterClick = false;
+filterStrip.addEventListener('pointerdown', event => { if (event.pointerType !== 'mouse' || event.button !== 0) return; filterDrag = { x: event.clientX, scrollLeft: filterStrip.scrollLeft, moved: false }; filterStrip.setPointerCapture(event.pointerId); filterStrip.classList.add('dragging'); });
+filterStrip.addEventListener('pointermove', event => { if (!filterDrag) return; const distance = event.clientX - filterDrag.x; if (Math.abs(distance) > 4) filterDrag.moved = true; filterStrip.scrollLeft = filterDrag.scrollLeft - distance; });
+filterStrip.addEventListener('pointerup', event => { if (!filterDrag) return; suppressFilterClick = filterDrag.moved; filterDrag = null; filterStrip.releasePointerCapture(event.pointerId); filterStrip.classList.remove('dragging'); });
+filterStrip.addEventListener('pointercancel', () => { filterDrag = null; filterStrip.classList.remove('dragging'); });
+filterStrip.addEventListener('click', event => { if (suppressFilterClick) { event.preventDefault(); event.stopImmediatePropagation(); suppressFilterClick = false; } }, true);
+filterStrip.addEventListener('wheel', event => { if (filterStrip.scrollWidth <= filterStrip.clientWidth) return; event.preventDefault(); filterStrip.scrollLeft += event.deltaY || event.deltaX; }, { passive: false });
 $('#composer').addEventListener('submit', async event => {
   event.preventDefault(); const text = $('#message').value.trim(); if (!text || !state.active) return;
   $('#message').value = ''; $('#message').style.height = 'auto';
