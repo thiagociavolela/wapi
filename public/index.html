@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Central de atendimento</title><link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div class="app-shell">
+    <nav class="rail">
+      <div class="brand-mark small">C</div>
+      <button class="rail-button active" title="Conversas">◫</button>
+      <button class="rail-button" title="Relatórios">⌁</button>
+      <button class="rail-button bottom" id="logout" title="Sair">↪</button>
+    </nav>
+    <aside class="inbox-panel">
+      <header class="inbox-header">
+        <div><p class="eyebrow">ATENDIMENTO</p><h1>Conversas</h1></div>
+        <span class="online-dot" title="Atualizações em tempo real"></span>
+      </header>
+      <div class="search"><span>⌕</span><input id="search" placeholder="Buscar nome ou telefone"></div>
+      <div class="filters">
+        <button class="filter active" data-status="">Todas</button><button class="filter" data-status="new">Novas</button><button class="filter" data-status="open">Em atendimento</button>
+      </div>
+      <div id="conversation-list" class="conversation-list"><div class="empty">Carregando conversas…</div></div>
+    </aside>
+    <main class="chat-panel">
+      <section id="no-chat" class="welcome-state"><div class="welcome-icon">✦</div><h2>Seu atendimento começa aqui</h2><p>Selecione uma conversa para visualizar o histórico e responder.</p></section>
+      <section id="chat" class="chat hidden">
+        <header class="chat-header">
+          <div class="avatar" id="chat-avatar"></div><div class="grow"><h2 id="chat-name"></h2><p id="chat-phone" class="muted"></p></div>
+          <span id="window-badge" class="badge"></span>
+          <select id="status"><option value="new">Nova</option><option value="open">Em atendimento</option><option value="pending">Pendente</option><option value="resolved">Resolvida</option></select>
+          <button id="assign" class="secondary">Assumir</button>
+        </header>
+        <div id="message-list" class="message-list"></div>
+        <div id="composer-alert" class="composer-alert hidden"></div>
+        <form id="composer" class="composer">
+          <textarea id="message" rows="1" maxlength="4096" placeholder="Digite uma mensagem"></textarea>
+          <button class="send-button" title="Enviar">➤</button>
+        </form>
+      </section>
+    </main>
+    <aside id="details" class="details-panel hidden">
+      <p class="eyebrow">CONTATO</p><div class="detail-avatar" id="detail-avatar"></div><h2 id="detail-name"></h2><p id="detail-phone" class="muted"></p>
+      <hr><h3>Responsável</h3><p id="detail-agent" class="muted">Não atribuído</p>
+      <h3>Janela de atendimento</h3><p id="detail-window" class="muted"></p>
+    </aside>
+  </div>
+  <div id="toast" class="toast hidden"></div>
+  <script type="module" src="/js/app.js"></script>
+</body></html>
