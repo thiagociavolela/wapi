@@ -289,3 +289,12 @@ body{background:#090a11;color:var(--text)}
 .quick-popover,.modal{color:#eeeef5;border:1px solid #303342;background:#171923}.quick-reply{color:#e8e6ef}.quick-reply:hover{background:rgba(131,109,255,.13)}.quick-reply small,.modal-description{color:#9296a8}.modal-head>button{color:#aaaebe;background:#242733}.modal input,.modal textarea,.modal select{color:#f0eef7;border-color:#303342;background:#1d1f2a}.ghost{color:#c3c1cd;border-color:#343746;background:#1d1f2a}
 .message-list::-webkit-scrollbar-thumb,.conversation-list::-webkit-scrollbar-thumb{background:#353849;border-color:transparent}
 .toast{color:#fff;border:1px solid #38334f;background:#211d35}
+
+/* Dark authentication experience */
+.login-page{position:relative;isolation:isolate;background:#090a11;background-image:radial-gradient(circle at 18% 14%,rgba(112,78,234,.24),transparent 28%),radial-gradient(circle at 83% 82%,rgba(24,184,131,.14),transparent 30%),linear-gradient(145deg,#090a11,#10111c);color:#f3f2fa}
+.login-page:before{content:"";position:fixed;z-index:-1;inset:0;opacity:.18;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90'%3E%3Cg fill='none' stroke='%238b80ad' stroke-opacity='.35' stroke-width='.8'%3E%3Cpath d='M12 17c8-6 14 2 8 9s-15 0-8-9ZM58 10l8 8m-8 0 8-8M36 52c6-7 14 0 8 7s-14 0-8-7ZM70 61c8 1 9 10 1 12s-10-10-1-12Z'/%3E%3C/g%3E%3C/svg%3E")}
+.login-card{position:relative;overflow:hidden;border:1px solid rgba(131,109,255,.24);background:linear-gradient(145deg,rgba(27,28,42,.96),rgba(17,19,29,.97));box-shadow:0 30px 90px rgba(0,0,0,.48),0 0 80px rgba(104,73,225,.08);backdrop-filter:blur(24px)}
+.login-card:before{content:"";position:absolute;top:-110px;right:-90px;width:240px;height:240px;border-radius:50%;background:radial-gradient(circle,rgba(126,98,255,.22),transparent 68%);pointer-events:none}
+.login-card h1{color:#f7f5ff}.login-card>p.muted{color:#969aac}
+.login-card label{color:#d9d7e2}.login-card input{color:#f5f3fa;border-color:#303342;background:#1b1d28}.login-card input:focus{border-color:#8069fb;background:#1e202d;box-shadow:0 0 0 3px rgba(131,109,255,.13)}
+.login-card .primary{background:linear-gradient(135deg,#8069fb,#6047df);box-shadow:0 10px 28px rgba(97,70,223,.32)}
