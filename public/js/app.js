@@ -17,6 +17,8 @@ async function init() {
 
 async function loadConversations(preserve = true) {
   const data = await api(`/api/conversations?search=${encodeURIComponent($('#search').value)}`);
+  $('#total-count').textContent = data.items.length;
+  $('#unread-count').textContent = data.items.reduce((total, item) => total + Number(item.unreadCount || 0), 0);
   state.conversations = data.items.filter(item => !state.status || item.status === state.status);
   renderConversations();
   if (preserve && state.active) state.active = state.conversations.find(item => item.id === state.active.id) || state.active;
@@ -27,7 +29,7 @@ function renderConversations() {
     <button class="conversation ${state.active?.id === item.id ? 'active' : ''}" data-id="${item.id}">
       <span class="avatar">${escapeHtml(initials(displayName(item)))}</span><span class="conversation-copy">
         <span class="conversation-top"><strong>${escapeHtml(displayName(item))}</strong><time>${time(item.lastMessageAt)}</time></span>
-        <span class="conversation-bottom"><span>${escapeHtml(item.lastMessagePreview || 'Nova conversa')}</span>${item.unreadCount ? `<b>${item.unreadCount}</b>` : ''}</span>
+        <span class="conversation-bottom"><span><i class="status-dot ${escapeHtml(item.status)}"></i>${escapeHtml(item.lastMessagePreview || 'Nova conversa')}</span>${item.unreadCount ? `<b>${item.unreadCount}</b>` : ''}</span>
       </span>
     </button>`).join('') : '<div class="empty">Nenhuma conversa encontrada.</div>';
 }
@@ -35,12 +37,15 @@ function renderConversations() {
 async function openConversation(id) {
   state.active = state.conversations.find(item => item.id === id);
   if (!state.active) return;
+  $('.app-shell').classList.add('chat-open');
   renderConversations(); $('#no-chat').classList.add('hidden'); $('#chat').classList.remove('hidden'); $('#details').classList.remove('hidden');
   const name = displayName(state.active);
   $('#chat-name').textContent = $('#detail-name').textContent = name;
   $('#chat-phone').textContent = $('#detail-phone').textContent = state.active.phone;
   $('#chat-avatar').textContent = $('#detail-avatar').textContent = initials(name);
-  $('#detail-agent').textContent = state.active.assignedUserName || 'Não atribuído'; $('#status').value = state.active.status;
+  $('#detail-agent').textContent = state.active.assignedUserName || 'Não atribuído';
+  $('#assign').textContent = state.active.assignedUserName ? 'Reatribuir' : 'Assumir conversa';
+  $('#status').value = state.active.status;
   updateWindow(); await Promise.all([loadMessages(), api(`/api/conversations/${id}/read`, { method: 'POST' })]);
 }
 
@@ -48,7 +53,7 @@ function updateWindow() {
   const open = windowOpen(state.active); const label = open ? `Janela aberta até ${dateTime(state.active.serviceWindowExpiresAt)}` : 'Janela encerrada · use um template';
   $('#window-badge').textContent = open ? 'Janela aberta' : 'Janela encerrada'; $('#window-badge').className = `badge ${open ? 'success' : 'warning'}`;
   $('#detail-window').textContent = label; $('#message').disabled = !open; $('.send-button').disabled = !open;
-  $('#composer-alert').classList.toggle('hidden', open); $('#composer-alert').textContent = open ? '' : 'A resposta livre não está disponível. O próximo módulo permitirá escolher um template aprovado pela Meta.';
+  $('#composer-alert').classList.toggle('hidden', open); $('#composer-alert').textContent = open ? '' : 'A resposta livre não está disponível. Selecione um template aprovado pela Meta.';
 }
 
 async function loadMessages() {
@@ -74,9 +79,12 @@ $('#composer').addEventListener('submit', async event => {
   catch (error) { toast(error.message); } finally { $('.send-button').disabled = !windowOpen(state.active); }
 });
 $('#assign').addEventListener('click', async () => { if (!state.active) return; await api(`/api/conversations/${state.active.id}/assign`, { method: 'POST', body: JSON.stringify({ userId: state.user.id }) }); await loadConversations(); await openConversation(state.active.id); });
+$('#detail-assign-shortcut').addEventListener('click', () => $('#assign').click());
 $('#status').addEventListener('change', async event => { await api(`/api/conversations/${state.active.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: event.target.value }) }); await loadConversations(); });
 $('#logout').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); location.href = '/login.html'; });
 $('#message').addEventListener('input', event => { event.target.style.height = 'auto'; event.target.style.height = `${Math.min(event.target.scrollHeight, 140)}px`; });
+$('#message').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); $('#composer').requestSubmit(); } });
+$('#mobile-back').addEventListener('click', () => $('.app-shell').classList.remove('chat-open'));
 
 function connectEvents() {
   const source = new EventSource('/api/events');

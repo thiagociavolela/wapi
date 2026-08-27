@@ -1,51 +1,54 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Central de atendimento</title><link rel="stylesheet" href="/css/app.css">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#11131f">
+  <title>Central de atendimento</title><link rel="stylesheet" href="/css/app.css?v=3">
 </head>
 <body>
   <div class="app-shell">
-    <nav class="rail">
+    <nav class="rail" aria-label="Navegação principal">
       <div class="brand-mark small">C</div>
-      <button class="rail-button active" title="Conversas">◫</button>
-      <button class="rail-button" title="Relatórios">⌁</button>
-      <button class="rail-button bottom" id="logout" title="Sair">↪</button>
+      <div class="rail-group">
+        <button class="rail-button active" title="Conversas" aria-label="Conversas"><svg viewBox="0 0 24 24"><path d="M20 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h9a4 4 0 0 1 4 4z"/></svg></button>
+        <button class="rail-button" title="Relatórios" aria-label="Relatórios"><svg viewBox="0 0 24 24"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/></svg></button>
+      </div>
+      <div class="rail-group rail-bottom">
+        <button class="rail-button" title="Configurações" aria-label="Configurações"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.95 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.58 15 1.7 1.7 0 0 0 3 14v-4h.08A1.7 1.7 0 0 0 4.6 8.95a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.58 1.7 1.7 0 0 0 10 3h4a1.7 1.7 0 0 0 1.05 1.58 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.42 9 1.7 1.7 0 0 0 21 10v4a1.7 1.7 0 0 0-1.6 1z"/></svg></button>
+        <button class="rail-button" id="logout" title="Sair" aria-label="Sair"><svg viewBox="0 0 24 24"><path d="M10 17l5-5-5-5m5 5H3m12-9h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/></svg></button>
+      </div>
     </nav>
     <aside class="inbox-panel">
-      <header class="inbox-header">
-        <div><p class="eyebrow">ATENDIMENTO</p><h1>Conversas</h1></div>
-        <span class="online-dot" title="Atualizações em tempo real"></span>
-      </header>
-      <div class="search"><span>⌕</span><input id="search" placeholder="Buscar nome ou telefone"></div>
-      <div class="filters">
-        <button class="filter active" data-status="">Todas</button><button class="filter" data-status="new">Novas</button><button class="filter" data-status="open">Em atendimento</button>
-      </div>
+      <header class="inbox-header"><div><p class="eyebrow">WORKSPACE</p><h1>Atendimento</h1></div><div class="connection-pill"><span></span> Online</div></header>
+      <div class="inbox-summary"><span><b id="total-count">0</b> conversas</span><span class="summary-separator"></span><span><b id="unread-count">0</b> não lidas</span></div>
+      <label class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="search" placeholder="Buscar conversa..." autocomplete="off"><kbd>⌘ K</kbd></label>
+      <div class="filters"><button class="filter active" data-status="">Todas</button><button class="filter" data-status="new">Novas</button><button class="filter" data-status="open">Em atendimento</button></div>
       <div id="conversation-list" class="conversation-list"><div class="empty">Carregando conversas…</div></div>
     </aside>
     <main class="chat-panel">
-      <section id="no-chat" class="welcome-state"><div class="welcome-icon">✦</div><h2>Seu atendimento começa aqui</h2><p>Selecione uma conversa para visualizar o histórico e responder.</p></section>
+      <section id="no-chat" class="welcome-state"><div class="welcome-orbit"><div class="welcome-icon"><svg viewBox="0 0 24 24"><path d="M20 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h9a4 4 0 0 1 4 4z"/></svg></div></div><p class="eyebrow">CAIXA DE ENTRADA</p><h2>Conecte-se com seus clientes</h2><p>Selecione uma conversa ao lado para visualizar o histórico<br>e iniciar um atendimento personalizado.</p></section>
       <section id="chat" class="chat hidden">
         <header class="chat-header">
-          <div class="avatar" id="chat-avatar"></div><div class="grow"><h2 id="chat-name"></h2><p id="chat-phone" class="muted"></p></div>
+          <button id="mobile-back" class="icon-button mobile-only" aria-label="Voltar"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button>
+          <div class="avatar online" id="chat-avatar"></div><div class="grow"><h2 id="chat-name"></h2><p id="chat-phone" class="muted"></p></div>
           <span id="window-badge" class="badge"></span>
-          <select id="status"><option value="new">Nova</option><option value="open">Em atendimento</option><option value="pending">Pendente</option><option value="resolved">Resolvida</option></select>
-          <button id="assign" class="secondary">Assumir</button>
+          <label class="select-wrap"><span>Status</span><select id="status"><option value="new">Nova</option><option value="open">Em atendimento</option><option value="pending">Pendente</option><option value="resolved">Resolvida</option></select></label>
+          <button id="assign" class="primary compact">Assumir conversa</button>
         </header>
-        <div id="message-list" class="message-list"></div>
-        <div id="composer-alert" class="composer-alert hidden"></div>
+        <div id="message-list" class="message-list"></div><div id="composer-alert" class="composer-alert hidden"></div>
         <form id="composer" class="composer">
-          <textarea id="message" rows="1" maxlength="4096" placeholder="Digite uma mensagem"></textarea>
-          <button class="send-button" title="Enviar">➤</button>
+          <button type="button" class="composer-tool" title="Anexar arquivo" disabled><svg viewBox="0 0 24 24"><path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.5-9.5a4 4 0 0 1 5.7 5.7l-9.5 9.5a2 2 0 1 1-2.8-2.8l8.8-8.8"/></svg></button>
+          <div class="composer-input-wrap"><textarea id="message" rows="1" maxlength="4096" placeholder="Escreva sua mensagem..."></textarea><span class="composer-hint">Enter para enviar</span></div>
+          <button class="send-button" title="Enviar" aria-label="Enviar"><svg viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4zM22 2 11 13"/></svg></button>
         </form>
       </section>
     </main>
     <aside id="details" class="details-panel hidden">
-      <p class="eyebrow">CONTATO</p><div class="detail-avatar" id="detail-avatar"></div><h2 id="detail-name"></h2><p id="detail-phone" class="muted"></p>
-      <hr><h3>Responsável</h3><p id="detail-agent" class="muted">Não atribuído</p>
-      <h3>Janela de atendimento</h3><p id="detail-window" class="muted"></p>
+      <div class="details-heading"><div><p class="eyebrow">DETALHES</p><h2>Informações</h2></div><button class="icon-button" title="Mais opções">•••</button></div>
+      <div class="contact-profile"><div class="detail-avatar" id="detail-avatar"></div><h2 id="detail-name"></h2><p id="detail-phone" class="muted"></p><span class="channel-badge"><b>◉</b> WhatsApp</span></div>
+      <div class="detail-section"><div class="detail-label"><span>Responsável</span><button id="detail-assign-shortcut" type="button">Alterar</button></div><div class="agent-row"><span class="mini-avatar">A</span><p id="detail-agent">Não atribuído</p></div></div>
+      <div class="detail-section"><div class="detail-label"><span>Janela de atendimento</span></div><div class="window-card"><span class="pulse-dot"></span><p id="detail-window" class="muted"></p></div></div>
+      <div class="detail-section"><div class="detail-label"><span>Atalhos</span></div><div class="quick-actions"><button disabled>Adicionar etiqueta</button><button disabled>Criar anotação</button></div></div>
     </aside>
   </div>
-  <div id="toast" class="toast hidden"></div>
-  <script type="module" src="/js/app.js"></script>
+  <div id="toast" class="toast hidden"></div><script type="module" src="/js/app.js?v=3"></script>
 </body></html>
