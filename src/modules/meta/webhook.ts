@@ -8,18 +8,21 @@ type Json = Record<string, any>;
 
 export async function processWebhook(payload: Json) {
   const organizationId = await defaultOrganizationId();
-  for (const entry of payload.entry ?? []) {
-    for (const change of entry.changes ?? []) {
-      const value = change.value ?? {};
-      const profileByWaId = new Map<string, string | undefined>(
-        (value.contacts ?? []).map((contact: Json) => [String(contact.wa_id), contact.profile?.name])
-      );
-      for (const message of value.messages ?? []) {
-        await processInbound(organizationId, message, profileByWaId.get(message.from));
-      }
-      for (const status of value.statuses ?? []) await processStatus(organizationId, status);
+  for (const change of extractChanges(payload)) {
+    const value = change.value ?? {};
+    const profileByWaId = new Map<string, string | undefined>(
+      (value.contacts ?? []).map((contact: Json) => [String(contact.wa_id), contact.profile?.name])
+    );
+    for (const message of value.messages ?? []) {
+      await processInbound(organizationId, message, profileByWaId.get(String(message.from)));
     }
+    for (const status of value.statuses ?? []) await processStatus(organizationId, status);
   }
+}
+
+export function extractChanges(payload: Json): Json[] {
+  if (payload?.field && payload?.value) return [payload];
+  return (payload?.entry ?? []).flatMap((entry: Json) => Array.isArray(entry?.changes) ? entry.changes : []);
 }
 
 async function processInbound(organizationId: string, message: Json, profileName?: string) {
