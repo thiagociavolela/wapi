@@ -299,3 +299,4 @@ body{background:#090a11;color:var(--text)}
 .login-card h1{color:#f7f5ff}.login-card>p.muted{color:#969aac}
 .login-card label{color:#d9d7e2}.login-card input{color:#f5f3fa;border-color:#303342;background:#1b1d28}.login-card input:focus{border-color:#8069fb;background:#1e202d;box-shadow:0 0 0 3px rgba(131,109,255,.13)}
 .login-card .primary{background:linear-gradient(135deg,#8069fb,#6047df);box-shadow:0 10px 28px rgba(97,70,223,.32)}
+.filters{scrollbar-width:none;-ms-overflow-style:none}.filters::-webkit-scrollbar{display:none;width:0;height:0}
