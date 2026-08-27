@@ -13,6 +13,12 @@ Projeto independente em Node.js, TypeScript, HTML, CSS e JavaScript para atendim
 - Organização, usuários, contatos, conversas, mensagens, notas e auditoria no schema.
 - Caixa de entrada responsiva em HTML/CSS/JavaScript puro.
 - Atribuição, estados de conversa, não lidas e atualização ao vivo por SSE.
+- Distribuição de conversas entre atendentes ativos.
+- Notas internas com autoria e auditoria.
+- Etiquetas comerciais por conversa.
+- Respostas rápidas com atalhos pré-configurados.
+- Edição do nome do contato.
+- Envio de templates oficiais sem variáveis, inclusive fora da janela de 24 horas.
 - Docker Compose para MySQL local.
 
 ## Requisitos
@@ -33,7 +39,7 @@ npm run dev
 
 No PowerShell, use `Copy-Item .env.example .env` no lugar de `cp`.
 
-O servidor aplica a migration e cria o primeiro administrador usando `ADMIN_EMAIL` e `ADMIN_PASSWORD`. Depois acesse `http://localhost:3000`.
+O servidor aplica automaticamente todas as migrations ainda não executadas, em ordem, e cria o primeiro administrador usando `ADMIN_EMAIL` e `ADMIN_PASSWORD`. Depois acesse `http://localhost:3000`.
 
 ## Configurar a Meta
 
@@ -70,6 +76,6 @@ npm start
 
 ## Próximos módulos
 
-Esta é a fundação e o primeiro fluxo utilizável. A evolução prevista inclui upload/download seguro de mídias, seletor e sincronização de templates, respostas rápidas, equipes e filas, notas/etiquetas no painel, SLA, storage S3/R2, Redis/BullMQ, automações, relatórios e IA assistiva.
+Esta é a fundação e o primeiro fluxo comercial utilizável. A evolução prevista inclui upload/download seguro de mídias, sincronização automática e parâmetros dinâmicos de templates, equipes e filas avançadas, SLA, storage S3/R2, Redis/BullMQ, automações, relatórios e IA assistiva.
 
 Para múltiplas instâncias do Node, substitua o emissor SSE em memória por Redis Pub/Sub e processe webhooks em uma fila durável antes de responder à Meta.

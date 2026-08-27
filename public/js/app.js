@@ -1,7 +1,7 @@
 import { api } from './api.js';
 
 const $ = (selector) => document.querySelector(selector);
-const state = { user: null, conversations: [], active: null, status: '', searchTimer: null };
+const state = { user: null, users: [], quickReplies: [], tags: [], conversations: [], active: null, status: '', searchTimer: null };
 
 function escapeHtml(value = '') { const node = document.createElement('div'); node.textContent = String(value); return node.innerHTML; }
 function initials(name = '?') { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase(); }
@@ -12,7 +12,9 @@ function windowOpen(item) { return item?.serviceWindowExpiresAt && new Date(item
 
 async function init() {
   state.user = (await api('/api/auth/me')).user;
-  await loadConversations(); connectEvents();
+  const [users, quickReplies] = await Promise.all([api('/api/users'), api('/api/quick-replies')]);
+  state.users = users.items; state.quickReplies = quickReplies.items;
+  renderAgentOptions(); renderQuickReplies(); await loadConversations(); connectEvents();
 }
 
 async function loadConversations(preserve = true) {
@@ -46,7 +48,7 @@ async function openConversation(id) {
   $('#detail-agent').textContent = state.active.assignedUserName || 'Não atribuído';
   $('#assign').textContent = state.active.assignedUserName ? 'Reatribuir' : 'Assumir conversa';
   $('#status').value = state.active.status;
-  updateWindow(); await Promise.all([loadMessages(), api(`/api/conversations/${id}/read`, { method: 'POST' })]);
+  updateWindow(); await Promise.all([loadMessages(), loadNotes(), loadTags(), api(`/api/conversations/${id}/read`, { method: 'POST' })]);
 }
 
 function updateWindow() {
@@ -69,6 +71,29 @@ async function loadMessages() {
 function statusIcon(status) { return status === 'read' ? '✓✓' : status === 'delivered' ? '✓✓' : status === 'failed' ? '!' : '✓'; }
 function toast(message) { $('#toast').textContent = message; $('#toast').classList.remove('hidden'); setTimeout(() => $('#toast').classList.add('hidden'), 3500); }
 
+function renderAgentOptions() {
+  $('#agent-select').innerHTML = `<option value="">Não atribuído</option>${state.users.map(user => `<option value="${user.id}">${escapeHtml(user.name)} · ${escapeHtml(user.role)}</option>`).join('')}`;
+}
+
+function renderQuickReplies() {
+  $('#quick-replies-popover').innerHTML = state.quickReplies.length ? state.quickReplies.map(item => `<button type="button" class="quick-reply" data-quick-id="${item.id}"><code>${escapeHtml(item.shortcut)}</code><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.body)}</small></button>`).join('') : '<div class="empty">Nenhuma resposta rápida configurada.</div>';
+}
+
+async function loadNotes() {
+  if (!state.active) return;
+  const data = await api(`/api/conversations/${state.active.id}/notes`);
+  $('#notes-list').innerHTML = data.items.length ? data.items.map(note => `<article class="note-card"><p>${escapeHtml(note.body)}</p><footer><span>${escapeHtml(note.userName)}</span><time>${dateTime(note.createdAt)}</time></footer></article>`).join('') : '<span class="detail-empty">Nenhuma anotação</span>';
+}
+
+async function loadTags() {
+  if (!state.active) return;
+  const data = await api(`/api/conversations/${state.active.id}/tags`); state.tags = data.items;
+  $('#tag-list').innerHTML = state.tags.length ? state.tags.map(tag => `<span class="tag-chip">${escapeHtml(tag.name)}<button type="button" data-remove-tag="${escapeHtml(tag.name)}" aria-label="Remover">×</button></span>`).join('') : '<span class="detail-empty">Nenhuma etiqueta</span>';
+}
+
+function openDialog(id) { const dialog = $(`#${id}`); if (!dialog.open) dialog.showModal(); }
+function closeDialog(id) { const dialog = $(`#${id}`); if (dialog.open) dialog.close(); }
+
 $('#conversation-list').addEventListener('click', event => { const button = event.target.closest('[data-id]'); if (button) openConversation(button.dataset.id); });
 $('#search').addEventListener('input', () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(() => loadConversations(false), 300); });
 document.querySelectorAll('.filter').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('.filter').forEach(x => x.classList.remove('active')); button.classList.add('active'); state.status = button.dataset.status; loadConversations(false); }));
@@ -78,17 +103,38 @@ $('#composer').addEventListener('submit', async event => {
   try { await api(`/api/conversations/${state.active.id}/messages`, { method: 'POST', body: JSON.stringify({ text }) }); $('#message').value = ''; await Promise.all([loadMessages(), loadConversations()]); }
   catch (error) { toast(error.message); } finally { $('.send-button').disabled = !windowOpen(state.active); }
 });
-$('#assign').addEventListener('click', async () => { if (!state.active) return; await api(`/api/conversations/${state.active.id}/assign`, { method: 'POST', body: JSON.stringify({ userId: state.user.id }) }); await loadConversations(); await openConversation(state.active.id); });
+$('#assign').addEventListener('click', () => { if (!state.active) return; const assigned = state.users.find(user => user.name === state.active.assignedUserName); $('#agent-select').value = assigned?.id || state.user.id; openDialog('assign-dialog'); });
 $('#detail-assign-shortcut').addEventListener('click', () => $('#assign').click());
 $('#status').addEventListener('change', async event => { await api(`/api/conversations/${state.active.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: event.target.value }) }); await loadConversations(); });
 $('#logout').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); location.href = '/login.html'; });
 $('#message').addEventListener('input', event => { event.target.style.height = 'auto'; event.target.style.height = `${Math.min(event.target.scrollHeight, 140)}px`; });
 $('#message').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); $('#composer').requestSubmit(); } });
 $('#mobile-back').addEventListener('click', () => $('.app-shell').classList.remove('chat-open'));
+$('#quick-replies-button').addEventListener('click', () => $('#quick-replies-popover').classList.toggle('hidden'));
+$('#quick-replies-popover').addEventListener('click', event => { const button = event.target.closest('[data-quick-id]'); if (!button) return; const item = state.quickReplies.find(reply => reply.id === button.dataset.quickId); if (item) { $('#message').value = item.body; $('#message').focus(); } $('#quick-replies-popover').classList.add('hidden'); });
+$('#template-button').addEventListener('click', () => { if (state.active) openDialog('template-dialog'); });
+$('#add-note').addEventListener('click', () => { if (state.active) openDialog('note-dialog'); });
+$('#add-tag').addEventListener('click', () => { if (state.active) openDialog('tag-dialog'); });
+$('#edit-contact').addEventListener('click', () => { if (!state.active) return; $('#contact-name').value = displayName(state.active); openDialog('contact-dialog'); });
+document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => closeDialog(button.dataset.close)));
+$('#assign-form').addEventListener('submit', async event => { event.preventDefault(); await api(`/api/conversations/${state.active.id}/assign`, { method: 'POST', body: JSON.stringify({ userId: $('#agent-select').value || null }) }); closeDialog('assign-dialog'); await loadConversations(); await openConversation(state.active.id); toast('Conversa atribuída.'); });
+$('#note-form').addEventListener('submit', async event => { event.preventDefault(); await api(`/api/conversations/${state.active.id}/notes`, { method: 'POST', body: JSON.stringify({ body: $('#note-body').value }) }); $('#note-body').value = ''; closeDialog('note-dialog'); await loadNotes(); toast('Anotação salva.'); });
+$('#tag-form').addEventListener('submit', async event => { event.preventDefault(); const name = $('#tag-name').value.trim().toLowerCase(); const names = [...new Set([...state.tags.map(tag => tag.name), name])]; await api(`/api/conversations/${state.active.id}/tags`, { method: 'PUT', body: JSON.stringify({ names }) }); $('#tag-name').value = ''; closeDialog('tag-dialog'); await Promise.all([loadTags(), loadConversations()]); toast('Etiqueta adicionada.'); });
+$('#tag-list').addEventListener('click', async event => { const button = event.target.closest('[data-remove-tag]'); if (!button) return; const names = state.tags.map(tag => tag.name).filter(name => name !== button.dataset.removeTag); await api(`/api/conversations/${state.active.id}/tags`, { method: 'PUT', body: JSON.stringify({ names }) }); await Promise.all([loadTags(), loadConversations()]); });
+$('#contact-form').addEventListener('submit', async event => { event.preventDefault(); await api(`/api/conversations/${state.active.id}/contact`, { method: 'PATCH', body: JSON.stringify({ name: $('#contact-name').value }) }); closeDialog('contact-dialog'); await loadConversations(); await openConversation(state.active.id); toast('Contato atualizado.'); });
+$('#template-form').addEventListener('submit', async event => { event.preventDefault(); $('#template-error').textContent = ''; try { await api(`/api/conversations/${state.active.id}/templates`, { method: 'POST', body: JSON.stringify({ name: $('#template-name').value, language: $('#template-language').value, components: [] }) }); closeDialog('template-dialog'); $('#template-name').value = ''; await loadMessages(); toast('Template enviado.'); } catch (error) { $('#template-error').textContent = error.message; } });
 
 function connectEvents() {
   const source = new EventSource('/api/events');
-  source.onmessage = async event => { const data = JSON.parse(event.data); if (data.type === 'ready') return; await loadConversations(); if (state.active && (!data.conversationId || data.conversationId === state.active.id)) await loadMessages(); };
+  source.onmessage = async event => {
+    const data = JSON.parse(event.data); if (data.type === 'ready') return;
+    await loadConversations();
+    if (state.active && (!data.conversationId || data.conversationId === state.active.id)) {
+      await loadMessages();
+      if (data.type === 'note') await loadNotes();
+      if (data.type === 'conversation') await loadTags();
+    }
+  };
 }
 
 init().catch(error => toast(error.message));
