@@ -78,6 +78,17 @@ async function openConversation(id) {
   $('#status').value = state.active.status;
   $('#team-select').value = state.active.teamId || ''; $('#priority-select').value = state.active.priority || 'normal';
   updateWindow(); await Promise.all([loadMessages(), loadNotes(), loadTags(), api(`/api/conversations/${id}/read`, { method: 'POST' })]);
+  layoutConversation();
+}
+
+function layoutConversation() {
+  if (!state.active) return;
+  const chat = $('#chat'); const composer = $('#composer'); const alert = $('#composer-alert'); const messages = $('#message-list');
+  composer.hidden = false; composer.classList.remove('hidden');
+  if (!state.recorder) composer.classList.remove('recording');
+  chat.style.height = `${chat.parentElement.clientHeight}px`;
+  const reserved = composer.offsetHeight + 36 + (alert.classList.contains('hidden') ? 0 : alert.offsetHeight);
+  messages.style.bottom = `${Math.max(reserved, 100)}px`;
 }
 
 function updateWindow() {
@@ -86,6 +97,7 @@ function updateWindow() {
   $('#window-badge').textContent = open ? 'Janela aberta' : 'Janela encerrada'; $('#window-badge').className = `badge ${open ? 'success' : 'warning'}`;
   $('#detail-window').textContent = label; $('#message').disabled = !open; $('.send-button').disabled = !open;
   $('#composer-alert').classList.toggle('hidden', open); $('#composer-alert').textContent = open ? '' : 'A resposta livre não está disponível. Selecione um template aprovado pela Meta.';
+  requestAnimationFrame(layoutConversation);
 }
 
 async function loadMessages() {
@@ -111,6 +123,7 @@ function renderMessages() {
       ${reactionContent(item)}</article><button type="button" class="message-more" data-open-actions="${item.id}" aria-label="Ações da mensagem">⌄</button></div>`;
   }).join('') : '<div class="empty">Ainda não há mensagens.</div>';
   $('#message-list').scrollTop = $('#message-list').scrollHeight;
+  requestAnimationFrame(layoutConversation);
 }
 
 function statusIcon(status) { return status === 'queued' ? '◷' : status === 'read' ? '✓✓' : status === 'delivered' ? '✓✓' : status === 'failed' ? '!' : '✓'; }
@@ -150,8 +163,9 @@ document.addEventListener('keydown', event => { if ((event.ctrlKey || event.meta
 document.querySelectorAll('.filter').forEach(button => button.addEventListener('click', async () => {
   document.querySelectorAll('.filter').forEach(x => x.classList.remove('active')); button.classList.add('active'); state.status = button.dataset.status;
   await loadConversations(false);
-  if (state.active) { updateWindow(); renderConversations(); }
+  if (state.active) { updateWindow(); renderConversations(); layoutConversation(); }
 }));
+window.addEventListener('resize', layoutConversation);
 const filterStrip = $('.filters'); let filterDrag = null; let suppressFilterClick = false;
 filterStrip.addEventListener('pointerdown', event => { if (event.pointerType !== 'mouse' || event.button !== 0) return; filterDrag = { x: event.clientX, scrollLeft: filterStrip.scrollLeft, moved: false, pointerId: event.pointerId }; });
 filterStrip.addEventListener('pointermove', event => { if (!filterDrag) return; const distance = event.clientX - filterDrag.x; if (Math.abs(distance) > 4 && !filterDrag.moved) { filterDrag.moved = true; filterStrip.setPointerCapture(filterDrag.pointerId); filterStrip.classList.add('dragging'); } if (filterDrag.moved) filterStrip.scrollLeft = filterDrag.scrollLeft - distance; });
