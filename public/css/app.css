@@ -316,3 +316,9 @@ body{background:#090a11;color:var(--text)}
 .composer{position:absolute;z-index:10;right:22px;bottom:18px;left:22px;margin:0;flex-shrink:0}
 .composer-alert{position:absolute;z-index:9;right:22px;bottom:87px;left:22px;margin:0}
 @media(max-width:760px){.chat-header{height:70px}.message-list{inset:70px 0 0;padding-bottom:96px}.composer{right:8px;bottom:max(8px,env(safe-area-inset-bottom));left:8px}.composer-alert{right:8px;bottom:75px;left:8px}}
+
+/* Fixed inbox controls with an independently scrollable conversation list. */
+.inbox-panel{height:100%;min-height:0;overflow:hidden}
+.inbox-header,.inbox-summary,.search,.filters{flex-shrink:0}
+.conversation-list{min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior-y:contain;scrollbar-width:none;-ms-overflow-style:none}
+.conversation-list::-webkit-scrollbar{display:none;width:0;height:0}
