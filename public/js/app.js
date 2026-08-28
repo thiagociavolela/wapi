@@ -82,6 +82,7 @@ async function openConversation(id) {
 
 function updateWindow() {
   const open = windowOpen(state.active); const label = open ? `Janela aberta até ${dateTime(state.active.serviceWindowExpiresAt)}` : 'Janela encerrada · use um template';
+  $('#composer').classList.remove('hidden');
   $('#window-badge').textContent = open ? 'Janela aberta' : 'Janela encerrada'; $('#window-badge').className = `badge ${open ? 'success' : 'warning'}`;
   $('#detail-window').textContent = label; $('#message').disabled = !open; $('.send-button').disabled = !open;
   $('#composer-alert').classList.toggle('hidden', open); $('#composer-alert').textContent = open ? '' : 'A resposta livre não está disponível. Selecione um template aprovado pela Meta.';
@@ -146,7 +147,11 @@ function closeDialog(id) { const dialog = $(`#${id}`); if (dialog.open) dialog.c
 $('#conversation-list').addEventListener('click', event => { const button = event.target.closest('[data-id]'); if (button) openConversation(button.dataset.id); });
 $('#search').addEventListener('input', () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(() => loadConversations(false), 300); });
 document.addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); $('#search').focus(); $('#search').select(); } });
-document.querySelectorAll('.filter').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('.filter').forEach(x => x.classList.remove('active')); button.classList.add('active'); state.status = button.dataset.status; loadConversations(false); }));
+document.querySelectorAll('.filter').forEach(button => button.addEventListener('click', async () => {
+  document.querySelectorAll('.filter').forEach(x => x.classList.remove('active')); button.classList.add('active'); state.status = button.dataset.status;
+  await loadConversations(false);
+  if (state.active) { updateWindow(); renderConversations(); }
+}));
 const filterStrip = $('.filters'); let filterDrag = null; let suppressFilterClick = false;
 filterStrip.addEventListener('pointerdown', event => { if (event.pointerType !== 'mouse' || event.button !== 0) return; filterDrag = { x: event.clientX, scrollLeft: filterStrip.scrollLeft, moved: false, pointerId: event.pointerId }; });
 filterStrip.addEventListener('pointermove', event => { if (!filterDrag) return; const distance = event.clientX - filterDrag.x; if (Math.abs(distance) > 4 && !filterDrag.moved) { filterDrag.moved = true; filterStrip.setPointerCapture(filterDrag.pointerId); filterStrip.classList.add('dragging'); } if (filterDrag.moved) filterStrip.scrollLeft = filterDrag.scrollLeft - distance; });
