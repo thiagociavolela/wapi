@@ -268,6 +268,8 @@ $('#template-button').addEventListener('click', async () => {
   try {
     const data = await api('/api/templates'); state.templates = data.items;
     $('#template-select').innerHTML = '<option value="">Selecione um template</option>' + state.templates.map((item, index) => `<option value="${index}">${escapeHtml(item.name)} · ${escapeHtml(item.language)} · ${escapeHtml(item.category)}</option>`).join('');
+    const preferred = state.templates.findIndex(item => item.name === 'pedido_recebido' && item.language === 'pt_BR');
+    if (preferred >= 0) { $('#template-select').value = String(preferred); renderTemplateForm(state.templates[preferred]); }
   } catch (error) { $('#template-error').textContent = error.message; }
 });
 $('#attach-button').addEventListener('click', () => { if (state.active && windowOpen(state.active)) $('#media-input').click(); else toast('A janela de atendimento está encerrada.'); });
@@ -302,16 +304,34 @@ $('#template-form').addEventListener('submit', async event => {
 
 function renderTemplateForm(template) {
   if (!template) { $('#template-preview').classList.add('hidden'); $('#template-variables').innerHTML = ''; return; }
+  const header = template.components?.find(component => component.type === 'HEADER')?.text || '';
   const body = template.components?.find(component => component.type === 'BODY')?.text || '';
-  $('#template-preview').textContent = body || `Template ${template.name}`; $('#template-preview').classList.remove('hidden');
+  const footer = template.components?.find(component => component.type === 'FOOTER')?.text || '';
+  const buttons = template.components?.find(component => component.type === 'BUTTONS')?.buttons || [];
   const fields = [];
   for (const component of template.components || []) {
     if (!['BODY', 'HEADER'].includes(component.type) || typeof component.text !== 'string') continue;
     const indexes = [...component.text.matchAll(/\{\{(\d+)\}\}/g)].map(match => Number(match[1]));
-    for (const index of [...new Set(indexes)].sort((a, b) => a - b)) fields.push(`<label>Variável ${index} · ${component.type.toLowerCase()}<input data-template-component="${component.type}" data-variable-index="${index}" required placeholder="Valor de {{${index}}}"></label>`);
+    for (const index of [...new Set(indexes)].sort((a, b) => a - b)) {
+      const orderField = template.name === 'pedido_recebido' && component.type === 'BODY';
+      const label = orderField ? (index === 1 ? 'Nome do cliente' : index === 2 ? 'Número do pedido' : `Variável ${index}`) : `Variável ${index} · ${component.type.toLowerCase()}`;
+      const value = orderField && index === 1 ? displayName(state.active) : '';
+      const placeholder = orderField && index === 2 ? 'Ex.: nº 12345' : `Valor de {{${index}}}`;
+      fields.push(`<label>${label}<input data-template-component="${component.type}" data-variable-index="${index}" value="${escapeHtml(value)}" required placeholder="${escapeHtml(placeholder)}"></label>`);
+    }
   }
   $('#template-variables').innerHTML = fields.join('');
+  $('#template-preview').dataset.header = header; $('#template-preview').dataset.body = body; $('#template-preview').dataset.footer = footer;
+  $('#template-preview').dataset.buttons = JSON.stringify(buttons); updateTemplatePreview(); $('#template-preview').classList.remove('hidden');
 }
+
+function updateTemplatePreview() {
+  const preview = $('#template-preview'); let body = preview.dataset.body || '';
+  document.querySelectorAll('[data-template-component="BODY"]').forEach(input => { body = body.replaceAll(`{{${input.dataset.variableIndex}}}`, input.value || `{{${input.dataset.variableIndex}}}`); });
+  const buttons = JSON.parse(preview.dataset.buttons || '[]');
+  preview.innerHTML = `${preview.dataset.header ? `<strong>${escapeHtml(preview.dataset.header)}</strong>` : ''}<p>${escapeHtml(body).replaceAll('\n', '<br>')}</p>${preview.dataset.footer ? `<small>${escapeHtml(preview.dataset.footer)}</small>` : ''}${buttons.length ? `<div class="template-preview-buttons">${buttons.map(button => `<span>${escapeHtml(button.text || 'Abrir')}</span>`).join('')}</div>` : ''}`;
+}
+$('#template-variables').addEventListener('input', updateTemplatePreview);
 
 function connectEvents() {
   const source = new EventSource('/api/events');

@@ -322,3 +322,5 @@ body{background:#090a11;color:var(--text)}
 .inbox-header,.inbox-summary,.search,.filters{flex-shrink:0}
 .conversation-list{min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior-y:contain;scrollbar-width:none;-ms-overflow-style:none}
 .conversation-list::-webkit-scrollbar{display:none;width:0;height:0}
+
+.template-preview>strong{display:block;margin-bottom:9px;color:#f4f2fb;font-size:14px}.template-preview>p{margin:0;white-space:normal}.template-preview>small{display:block;margin-top:10px;color:#85899b}.template-preview-buttons{display:grid;gap:6px;margin:12px -13px -13px}.template-preview-buttons span{padding:10px;border-top:1px solid #303342;color:#65e7bb;text-align:center;font-weight:750}
