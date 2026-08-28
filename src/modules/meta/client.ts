@@ -30,8 +30,11 @@ export async function sendMetaMessage(to: string, message: Record<string, unknow
   return { messageId, payload };
 }
 
-export const sendText = (to: string, body: string) =>
-  sendMetaMessage(to, { type: "text", text: { body, preview_url: true } });
+export const sendText = (to: string, body: string, replyToMetaMessageId?: string) =>
+  sendMetaMessage(to, { ...(replyToMetaMessageId ? { context: { message_id: replyToMetaMessageId } } : {}), type: "text", text: { body, preview_url: true } });
+
+export const sendReaction = (to: string, messageId: string, emoji: string) =>
+  sendMetaMessage(to, { type: "reaction", reaction: { message_id: messageId, emoji } });
 
 export const sendTemplate = (to: string, name: string, language: string, components: unknown[] = []) =>
   sendMetaMessage(to, { type: "template", template: { name, language: { code: language }, components } });
@@ -46,8 +49,9 @@ export async function uploadMedia(buffer: Buffer, mimeType: string, fileName: st
   return result.id;
 }
 
-export async function sendMedia(to: string, type: "image" | "audio" | "video" | "document", mediaId: string, caption?: string, fileName?: string) {
+export async function sendMedia(to: string, type: "image" | "audio" | "video" | "document", mediaId: string, caption?: string, fileName?: string, voice = false) {
   const media: Record<string, unknown> = { id: mediaId };
+  if (voice && type === "audio") media.voice = true;
   if (caption && type !== "audio") media.caption = caption;
   if (fileName && type === "document") media.filename = fileName;
   return sendMetaMessage(to, { type, [type]: media });

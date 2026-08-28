@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#090a11">
-  <title>Central de atendimento</title><link rel="stylesheet" href="/css/app.css?v=16">
+  <title>Central de atendimento</title><link rel="stylesheet" href="/css/app.css?v=17">
 </head>
 <body>
   <div class="app-shell">
@@ -37,13 +37,18 @@
         </header>
         <div id="message-list" class="message-list"></div><div id="composer-alert" class="composer-alert hidden"></div>
         <div id="quick-replies-popover" class="quick-popover hidden"></div>
+        <div id="message-actions" class="message-actions hidden"><div class="reaction-strip"><button data-reaction="👍">👍</button><button data-reaction="❤️">❤️</button><button data-reaction="😂">😂</button><button data-reaction="😮">😮</button><button data-reaction="😢">😢</button><button data-reaction="🙏">🙏</button><button data-more-reactions>＋</button></div><div class="message-menu"><button data-message-action="reply">↩ <span>Responder</span></button><button data-message-action="copy">▣ <span>Copiar</span></button><button data-message-action="react">☺ <span>Reagir</span></button><button data-message-action="note">＋ <span>Adicionar às notas</span></button></div></div>
+        <div id="emoji-popover" class="emoji-popover hidden"><emoji-picker class="dark" locale="pt" data-source="/vendor/emoji-data/pt/cldr/data.json"></emoji-picker></div>
         <form id="composer" class="composer">
           <button id="attach-button" type="button" class="composer-tool enabled" title="Anexar arquivo"><svg viewBox="0 0 24 24"><path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.5-9.5a4 4 0 0 1 5.7 5.7l-9.5 9.5a2 2 0 1 1-2.8-2.8l8.8-8.8"/></svg></button><input id="media-input" type="file" accept="image/*,audio/*,video/*,.pdf,.txt,.zip" hidden>
           <button id="quick-replies-button" type="button" class="composer-tool enabled" title="Respostas rápidas"><svg viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 11-13h-8z"/></svg></button>
           <button id="template-button" type="button" class="composer-tool enabled" title="Enviar template"><svg viewBox="0 0 24 24"><path d="M4 3h16v18H4zM8 8h8M8 12h8M8 16h5"/></svg></button>
-          <div class="composer-input-wrap"><textarea id="message" rows="1" maxlength="4096" placeholder="Digite uma mensagem"></textarea><span class="composer-hint">Enter para enviar</span></div>
+          <button id="emoji-button" type="button" class="composer-tool enabled" title="Emojis">☺</button>
+          <div class="composer-stack"><div id="reply-preview" class="reply-preview hidden"><div><strong id="reply-author"></strong><span id="reply-text"></span></div><button id="cancel-reply" type="button">×</button></div><div class="composer-input-wrap"><textarea id="message" rows="1" maxlength="4096" placeholder="Digite uma mensagem"></textarea><span class="composer-hint">Enter para enviar</span></div></div>
+          <button id="voice-button" type="button" class="composer-tool enabled" title="Gravar áudio"><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/></svg></button>
           <button class="send-button" title="Enviar" aria-label="Enviar"><svg viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4zM22 2 11 13"/></svg></button>
         </form>
+        <div id="voice-recorder" class="voice-recorder hidden"><button id="cancel-voice" type="button">×</button><span class="recording-dot"></span><strong id="voice-time">00:00</strong><div class="voice-wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><button id="send-voice" type="button">Enviar áudio</button></div>
       </section>
     </main>
     <aside id="details" class="details-panel hidden">
@@ -61,5 +66,5 @@
   <dialog id="tag-dialog" class="modal"><form id="tag-form"><div class="modal-head"><div><p class="eyebrow">ORGANIZAÇÃO</p><h2>Adicionar etiqueta</h2></div><button type="button" data-close="tag-dialog">×</button></div><label>Nome<input id="tag-name" maxlength="60" placeholder="ex: cliente vip" required></label><div class="modal-actions"><button type="button" class="ghost" data-close="tag-dialog">Cancelar</button><button class="primary" type="submit">Adicionar</button></div></form></dialog>
   <dialog id="assign-dialog" class="modal"><form id="assign-form"><div class="modal-head"><div><p class="eyebrow">DISTRIBUIÇÃO</p><h2>Atribuir conversa</h2></div><button type="button" data-close="assign-dialog">×</button></div><label>Atendente<select id="agent-select" required></select></label><div class="modal-actions"><button type="button" class="ghost" data-close="assign-dialog">Cancelar</button><button class="primary" type="submit">Confirmar</button></div></form></dialog>
   <dialog id="contact-dialog" class="modal"><form id="contact-form"><div class="modal-head"><div><p class="eyebrow">CONTATO</p><h2>Editar contato</h2></div><button type="button" data-close="contact-dialog">×</button></div><label>Nome<input id="contact-name" maxlength="160" required></label><div class="modal-actions"><button type="button" class="ghost" data-close="contact-dialog">Cancelar</button><button class="primary" type="submit">Salvar</button></div></form></dialog>
-  <div id="toast" class="toast hidden"></div><script type="module" src="/js/app.js?v=15"></script>
+  <div id="toast" class="toast hidden"></div><script type="module" src="/vendor/emoji-picker/index.js"></script><script type="module" src="/js/app.js?v=16"></script>
 </body></html>

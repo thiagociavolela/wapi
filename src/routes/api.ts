@@ -2,7 +2,8 @@ import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { requireAuth } from "../modules/auth/auth.js";
-import { addNote, assignConversation, changeStatus, countConversations, getMessageMedia, getMessages, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, replaceTags, sendAgentMedia, sendAgentTemplate, sendAgentText, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
+import { addNote, assignConversation, changeStatus, countConversations, getMessageMedia, getMessages, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, reactToMessage, replaceTags, sendAgentMedia, sendAgentTemplate, sendAgentText, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
+import { convertVoiceToOgg } from "../modules/conversations/audio.js";
 import { subscribe } from "../modules/realtime/events.js";
 import { isMetaConfigured } from "../config.js";
 import { listMessageTemplates } from "../modules/meta/client.js";
@@ -49,13 +50,19 @@ apiRouter.patch("/conversations/:id/routing", async (req, res) => {
   res.json({ ok: await updateConversationRouting(req.auth!.organizationId, req.auth!.id, String(req.params.id), parsed.data) });
 });
 apiRouter.post("/conversations/:id/messages", async (req, res) => {
-  const parsed = z.object({ text: z.string().trim().min(1).max(4096), clientId: z.string().uuid().optional() }).safeParse(req.body);
+  const parsed = z.object({ text: z.string().trim().min(1).max(4096), clientId: z.string().uuid().optional(), replyToMessageId: z.string().uuid().optional() }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "A mensagem precisa ter entre 1 e 4096 caracteres." });
   try {
-    res.status(201).json(await sendAgentText(req.auth!.organizationId, req.auth!.id, String(req.params.id), parsed.data.text, parsed.data.clientId));
+    res.status(201).json(await sendAgentText(req.auth!.organizationId, req.auth!.id, String(req.params.id), parsed.data.text, parsed.data.clientId, parsed.data.replyToMessageId));
   } catch (error) {
     res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar mensagem." });
   }
+});
+apiRouter.post("/conversations/:id/messages/:messageId/reaction", async (req, res) => {
+  const parsed = z.object({ emoji: z.string().max(32) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Reação inválida." });
+  try { res.json(await reactToMessage(req.auth!.organizationId, req.auth!.id, String(req.params.id), String(req.params.messageId), parsed.data.emoji)); }
+  catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao reagir." }); }
 });
 apiRouter.post("/conversations/:id/media", mediaUpload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Selecione um arquivo válido de até 20 MB." });
@@ -65,6 +72,14 @@ apiRouter.post("/conversations/:id/media", mediaUpload.single("file"), async (re
       buffer: req.file.buffer, mimeType: req.file.mimetype, fileName: req.file.originalname, caption
     }));
   } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar mídia." }); }
+});
+apiRouter.post("/conversations/:id/voice", mediaUpload.single("file"), async (req, res) => {
+  if (!req.file || !req.file.mimetype.startsWith("audio/")) return res.status(400).json({ error: "Gravação de áudio inválida." });
+  try {
+    const buffer = await convertVoiceToOgg(req.file.buffer);
+    if (buffer.length > 16 * 1024 * 1024) return res.status(413).json({ error: "O áudio convertido excede 16 MB." });
+    res.status(201).json(await sendAgentMedia(req.auth!.organizationId, req.auth!.id, String(req.params.id), { buffer, mimeType: "audio/ogg", fileName: "gravacao.ogg", voice: true }));
+  } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar áudio." }); }
 });
 apiRouter.get("/messages/:id/media", async (req, res) => {
   try {

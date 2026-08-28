@@ -2,7 +2,7 @@ import { api } from './api.js';
 
 const $ = (selector) => document.querySelector(selector);
 const SYSTEM_TIME_ZONE = 'America/Sao_Paulo';
-const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], active: null, status: 'new', searchTimer: null };
+const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], active: null, status: 'new', searchTimer: null, replyTo: null, actionMessage: null, emojiMode: 'insert', recorder: null };
 
 function escapeHtml(value = '') { const node = document.createElement('div'); node.textContent = String(value); return node.innerHTML; }
 function initials(name = '?') { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase(); }
@@ -28,6 +28,8 @@ function messageContent(item) {
   if (item.type === 'contacts' && Array.isArray(content.contacts)) return content.contacts.map(contact => `<div class="document-preview"><span>◉</span><div><strong>${escapeHtml(contact.name?.formatted_name || 'Contato')}</strong><small>Contato compartilhado</small></div></div>`).join('');
   return `<p>${escapeHtml(item.textBody || `[${item.type}]`)}</p>`;
 }
+function replyContent(item) { if (!item.replyToMessageId && !item.replyToMetaMessageId) return ''; return `<div class="quoted-message"><strong>${escapeHtml(item.replySenderName || (item.replyDirection === 'outbound' ? 'Atendimento' : displayName(state.active)))}</strong><span>${escapeHtml(item.replyTextBody || `[${item.replyType || 'mensagem'}]`)}</span></div>`; }
+function reactionContent(item) { return item.reactions?.length ? `<div class="message-reactions">${item.reactions.map(reaction => `<button type="button" data-existing-reaction="${item.id}" title="${reaction.direction === 'outbound' ? 'Atendimento' : 'Cliente'}">${escapeHtml(reaction.emoji)}</button>`).join('')}</div>` : ''; }
 
 async function init() {
   state.user = (await api('/api/auth/me')).user;
@@ -102,10 +104,10 @@ function renderMessages() {
     const separator = currentDay !== previousDay ? `<div class="message-day"><span>${dayLabel(item.createdAt)}</span></div>` : '';
     const grouped = currentDay === previousDay && item.direction === previousDirection;
     previousDay = currentDay; previousDirection = item.direction;
-    return `${separator}<div class="message-row ${item.direction} ${grouped ? 'same-author' : 'new-author'}"><article class="bubble">
-      ${item.senderName ? `<small>${escapeHtml(item.senderName)}</small>` : ''}${messageContent(item)}
+    return `${separator}<div class="message-row ${item.direction} ${grouped ? 'same-author' : 'new-author'}" data-message-id="${item.id}"><article class="bubble">
+      ${replyContent(item)}${item.senderName ? `<small>${escapeHtml(item.senderName)}</small>` : ''}${messageContent(item)}
       <footer>${item.status === 'failed' && item.direction === 'outbound' ? `<button type="button" class="message-retry" data-retry-id="${item.id}">Reenviar</button>` : ''}<time>${time(item.createdAt)}</time>${item.direction === 'outbound' ? `<span class="message-status ${item.status}" title="${statusLabel(item.status)}">${statusIcon(item.status)}</span>` : ''}</footer>
-    </article></div>`;
+      ${reactionContent(item)}</article><button type="button" class="message-more" data-open-actions="${item.id}" aria-label="Ações da mensagem">⌄</button></div>`;
   }).join('') : '<div class="empty">Ainda não há mensagens.</div>';
   $('#message-list').scrollTop = $('#message-list').scrollHeight;
 }
@@ -160,11 +162,12 @@ $('#composer').addEventListener('submit', async event => {
 
 async function sendOptimisticMessage(conversationId, text) {
   const clientId = crypto.randomUUID();
-  const optimistic = { id: clientId, conversationId, direction: 'outbound', type: 'text', textBody: text, status: 'queued', senderName: state.user.name, createdAt: new Date().toISOString(), optimistic: true };
+  const reply = state.replyTo; state.replyTo = null; renderReplyPreview();
+  const optimistic = { id: clientId, conversationId, direction: 'outbound', type: 'text', textBody: text, status: 'queued', senderName: state.user.name, createdAt: new Date().toISOString(), optimistic: true, replyToMessageId: reply?.id, replyToMetaMessageId: reply?.metaMessageId, replyTextBody: reply?.textBody, replyType: reply?.type, replyDirection: reply?.direction, replySenderName: reply?.senderName };
   state.pendingMessages.push(optimistic);
   if (state.active?.id === conversationId) renderMessages();
   try {
-    await api(`/api/conversations/${conversationId}/messages`, { method: 'POST', body: JSON.stringify({ text, clientId }) });
+    await api(`/api/conversations/${conversationId}/messages`, { method: 'POST', body: JSON.stringify({ text, clientId, replyToMessageId: reply?.id }) });
     state.pendingMessages = state.pendingMessages.filter(item => item.id !== clientId);
     if (state.active?.id === conversationId) await loadMessages();
     await loadConversations();
@@ -181,6 +184,53 @@ $('#message-list').addEventListener('click', event => {
   state.pendingMessages = state.pendingMessages.filter(item => item.id !== failed.id);
   sendOptimisticMessage(failed.conversationId || state.active.id, failed.textBody);
 });
+
+function findMessage(id) { return [...state.messages, ...state.pendingMessages].find(item => item.id === id); }
+function renderReplyPreview() {
+  $('#reply-preview').classList.toggle('hidden', !state.replyTo); if (!state.replyTo) return;
+  $('#reply-author').textContent = state.replyTo.senderName || (state.replyTo.direction === 'outbound' ? 'Atendimento' : displayName(state.active));
+  $('#reply-text').textContent = state.replyTo.textBody || `[${state.replyTo.type}]`;
+}
+function selectReply(item) { if (!item?.metaMessageId) return toast('Aguarde a sincronização desta mensagem.'); state.replyTo = item; renderReplyPreview(); $('#message').focus(); closeMessageActions(); }
+function closeMessageActions() { $('#message-actions').classList.add('hidden'); state.actionMessage = null; }
+function openMessageActions(item, x, y) { state.actionMessage = item; const menu = $('#message-actions'); menu.classList.remove('hidden'); menu.style.left = `${Math.min(x, innerWidth - 300)}px`; menu.style.top = `${Math.min(y, innerHeight - 360)}px`; }
+$('#message-list').addEventListener('contextmenu', event => { const row = event.target.closest('[data-message-id]'); if (!row) return; event.preventDefault(); openMessageActions(findMessage(row.dataset.messageId), event.clientX, event.clientY); });
+$('#message-list').addEventListener('click', event => { const button = event.target.closest('[data-open-actions]'); if (!button) return; const rect = button.getBoundingClientRect(); openMessageActions(findMessage(button.dataset.openActions), rect.left, rect.bottom + 5); });
+$('#message-list').addEventListener('dblclick', event => { const row = event.target.closest('[data-message-id]'); if (row) selectReply(findMessage(row.dataset.messageId)); });
+$('#message-actions').addEventListener('click', async event => {
+  const reaction = event.target.closest('[data-reaction]'); if (reaction) return applyReaction(state.actionMessage, reaction.dataset.reaction);
+  if (event.target.closest('[data-more-reactions]') || event.target.closest('[data-message-action="react"]')) { state.emojiMode = 'reaction'; $('#emoji-popover').classList.remove('hidden'); return; }
+  const action = event.target.closest('[data-message-action]')?.dataset.messageAction; const item = state.actionMessage; if (!action || !item) return;
+  if (action === 'reply') selectReply(item);
+  if (action === 'copy') { await navigator.clipboard.writeText(item.textBody || ''); toast('Mensagem copiada.'); closeMessageActions(); }
+  if (action === 'note') { $('#note-body').value = item.textBody || `[${item.type}]`; openDialog('note-dialog'); closeMessageActions(); }
+});
+async function applyReaction(item, emoji) {
+  if (!item?.metaMessageId || item.optimistic) return toast('Aguarde a sincronização da mensagem.');
+  item.reactions = (item.reactions || []).filter(reaction => reaction.actorKey !== 'business'); if (emoji) item.reactions.push({ emoji, direction: 'outbound', actorKey: 'business' }); renderMessages(); closeMessageActions(); $('#emoji-popover').classList.add('hidden');
+  try { await api(`/api/conversations/${state.active.id}/messages/${item.id}/reaction`, { method: 'POST', body: JSON.stringify({ emoji }) }); await loadMessages(); } catch (error) { toast(error.message); await loadMessages(); }
+}
+$('#cancel-reply').addEventListener('click', () => { state.replyTo = null; renderReplyPreview(); });
+$('#emoji-button').addEventListener('click', () => { state.emojiMode = 'insert'; $('#emoji-popover').classList.toggle('hidden'); closeMessageActions(); });
+$('emoji-picker').addEventListener('emoji-click', event => { const emoji = event.detail.unicode; if (state.emojiMode === 'reaction') applyReaction(state.actionMessage, emoji); else { const field = $('#message'), start = field.selectionStart, end = field.selectionEnd; field.setRangeText(emoji, start, end, 'end'); field.focus(); $('#emoji-popover').classList.add('hidden'); } });
+document.addEventListener('click', event => { if (!event.target.closest('#message-actions') && !event.target.closest('[data-message-id]')) closeMessageActions(); if (!event.target.closest('#emoji-popover') && !event.target.closest('#emoji-button') && !event.target.closest('[data-more-reactions]')) $('#emoji-popover').classList.add('hidden'); });
+
+$('#voice-button').addEventListener('click', startVoiceRecording);
+async function startVoiceRecording() {
+  if (!state.active || !windowOpen(state.active)) return toast('A janela de atendimento está encerrada.');
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast('Este navegador não permite gravar áudio.');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+    const recorder = new MediaRecorder(stream); const session = { recorder, stream, chunks: [], startedAt: Date.now(), send: false, timer: null }; state.recorder = session;
+    recorder.ondataavailable = event => { if (event.data.size) session.chunks.push(event.data); };
+    recorder.onstop = () => { stream.getTracks().forEach(track => track.stop()); clearInterval(session.timer); $('#voice-recorder').classList.add('hidden'); $('#composer').classList.remove('recording'); if (session.send && session.chunks.length) sendVoiceBlob(new Blob(session.chunks, { type: recorder.mimeType || 'audio/webm' })); state.recorder = null; };
+    recorder.start(250); $('#voice-recorder').classList.remove('hidden'); $('#composer').classList.add('recording'); updateVoiceTime(); session.timer = setInterval(updateVoiceTime, 500);
+  } catch { toast('Permissão de microfone não concedida.'); }
+}
+function updateVoiceTime() { if (!state.recorder) return; const seconds = Math.floor((Date.now() - state.recorder.startedAt) / 1000); $('#voice-time').textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`; }
+$('#cancel-voice').addEventListener('click', () => { if (state.recorder) { state.recorder.send = false; state.recorder.recorder.stop(); } });
+$('#send-voice').addEventListener('click', () => { if (state.recorder) { state.recorder.send = true; state.recorder.recorder.stop(); } });
+async function sendVoiceBlob(blob) { const form = new FormData(); form.append('file', blob, 'gravacao.webm'); toast('Enviando áudio…'); try { await api(`/api/conversations/${state.active.id}/voice`, { method: 'POST', body: form }); await Promise.all([loadMessages(), loadConversations()]); toast('Áudio enviado.'); } catch (error) { toast(error.message); } }
 $('#assign').addEventListener('click', () => { if (!state.active) return; const assigned = state.users.find(user => user.name === state.active.assignedUserName); $('#agent-select').value = assigned?.id || state.user.id; openDialog('assign-dialog'); });
 $('#detail-assign-shortcut').addEventListener('click', () => $('#assign').click());
 $('#status').addEventListener('change', async event => { await api(`/api/conversations/${state.active.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: event.target.value }) }); await loadConversations(); });

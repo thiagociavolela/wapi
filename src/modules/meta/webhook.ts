@@ -78,11 +78,25 @@ async function processInbound(organizationId: string, message: Json, profileName
         SELECT ?, ?, ?, DATE_ADD(NOW(3), INTERVAL COALESCE(s.first_response_minutes, 15) MINUTE), DATE_ADD(NOW(3), INTERVAL COALESCE(s.resolution_minutes, 480) MINUTE)
         FROM organizations o LEFT JOIN sla_policies s ON s.organization_id = o.id WHERE o.id = ?`, [conversationId, organizationId, contactId, organizationId]);
     }
+    if (message.type === "reaction" && message.reaction?.message_id) {
+      const [targets] = await connection.execute<RowDataPacket[]>("SELECT id FROM messages WHERE organization_id = ? AND meta_message_id = ? LIMIT 1", [organizationId, message.reaction.message_id]);
+      if (!message.reaction.emoji) await connection.execute("DELETE FROM message_reactions WHERE organization_id = ? AND target_meta_message_id = ? AND actor_key = ?", [organizationId, message.reaction.message_id, String(message.from)]);
+      else await connection.execute(`INSERT INTO message_reactions
+        (id, organization_id, conversation_id, target_message_id, target_meta_message_id, direction, actor_key, emoji)
+        VALUES (?, ?, ?, ?, ?, 'inbound', ?, ?)
+        ON DUPLICATE KEY UPDATE emoji = VALUES(emoji), target_message_id = VALUES(target_message_id), updated_at = NOW(3)`,
+        [crypto.randomUUID(), organizationId, conversationId, targets[0]?.id ?? null, message.reaction.message_id, String(message.from), message.reaction.emoji]);
+      await markEventProcessed(connection, `message:${message.id}`); await connection.commit();
+      publish(organizationId, { type: "reaction", conversationId }); return;
+    }
     const text = extractText(message);
+    const replyToMetaMessageId = message.context?.id ? String(message.context.id) : null;
+    let replyTargetId: string | null = null;
+    if (replyToMetaMessageId) { const [replyTargets] = await connection.execute<RowDataPacket[]>("SELECT id FROM messages WHERE organization_id = ? AND meta_message_id = ? LIMIT 1", [organizationId, replyToMetaMessageId]); replyTargetId = replyTargets[0]?.id ? String(replyTargets[0].id) : null; }
     await connection.execute(`INSERT IGNORE INTO messages
-      (id, organization_id, conversation_id, meta_message_id, direction, type, text_body, content, status, created_at)
-      VALUES (?, ?, ?, ?, 'inbound', ?, ?, ?, 'received', FROM_UNIXTIME(?))`,
-      [crypto.randomUUID(), organizationId, conversationId, message.id, message.type ?? "unknown", text, JSON.stringify(message), Number(message.timestamp) || Math.floor(Date.now() / 1000)]);
+      (id, organization_id, conversation_id, meta_message_id, reply_to_message_id, reply_to_meta_message_id, direction, type, text_body, content, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'inbound', ?, ?, ?, 'received', FROM_UNIXTIME(?))`,
+      [crypto.randomUUID(), organizationId, conversationId, message.id, replyTargetId, replyToMetaMessageId, message.type ?? "unknown", text, JSON.stringify(message), Number(message.timestamp) || Math.floor(Date.now() / 1000)]);
     await connection.execute(`UPDATE conversations SET status = IF(status = 'resolved', 'new', status),
       unread_count = unread_count + 1, service_window_expires_at = DATE_ADD(NOW(3), INTERVAL 24 HOUR),
       last_message_preview = ?, last_message_at = FROM_UNIXTIME(?) WHERE id = ?`,

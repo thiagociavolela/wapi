@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "../../database/pool.js";
 import { publish } from "../realtime/events.js";
-import { downloadMedia, sendMedia, sendTemplate, sendText, uploadMedia } from "../meta/client.js";
+import { downloadMedia, sendMedia, sendReaction, sendTemplate, sendText, uploadMedia } from "../meta/client.js";
 
 const DEFAULT_ORG_SQL = "SELECT id FROM organizations ORDER BY created_at LIMIT 1";
 
@@ -50,17 +50,27 @@ export async function getMessages(organizationId: string, conversationId: string
   let cursor = "";
   if (before) { cursor = "AND m.created_at < ?"; params.push(before); }
   const [rows] = await pool.execute<RowDataPacket[]>(`
-    SELECT m.id, m.meta_message_id AS metaMessageId, m.direction, m.type,
+    SELECT m.id, m.meta_message_id AS metaMessageId, m.reply_to_message_id AS replyToMessageId,
+      m.reply_to_meta_message_id AS replyToMetaMessageId, m.direction, m.type,
       m.text_body AS textBody, m.content, m.status, m.error_message AS errorMessage,
-      m.created_at AS createdAt, u.name AS senderName
+      m.created_at AS createdAt, u.name AS senderName, rm.text_body AS replyTextBody,
+      rm.type AS replyType, rm.direction AS replyDirection, ru.name AS replySenderName
     FROM messages m LEFT JOIN users u ON u.id = m.sent_by_user_id
+    LEFT JOIN messages rm ON rm.id = m.reply_to_message_id LEFT JOIN users ru ON ru.id = rm.sent_by_user_id
     WHERE m.organization_id = ? AND m.conversation_id = ? ${cursor}
     ORDER BY m.created_at DESC, m.id DESC LIMIT 51`, params);
   const hasMore = rows.length > 50;
-  return { items: rows.slice(0, 50).reverse(), hasMore };
+  const items = rows.slice(0, 50).reverse();
+  if (items.length) {
+    const ids = items.map((item) => item.id); const placeholders = ids.map(() => "?").join(",");
+    const [reactions] = await pool.execute<RowDataPacket[]>(`SELECT target_message_id AS targetMessageId, emoji, direction, actor_key AS actorKey
+      FROM message_reactions WHERE organization_id = ? AND target_message_id IN (${placeholders}) ORDER BY created_at`, [organizationId, ...ids]);
+    for (const item of items) item.reactions = reactions.filter((reaction) => reaction.targetMessageId === item.id);
+  }
+  return { items, hasMore };
 }
 
-export async function sendAgentText(organizationId: string, userId: string, conversationId: string, body: string, clientId?: string) {
+export async function sendAgentText(organizationId: string, userId: string, conversationId: string, body: string, clientId?: string, replyToMessageId?: string) {
   const [rows] = await pool.execute<RowDataPacket[]>(`
     SELECT ct.wa_id AS waId, c.service_window_expires_at AS expiresAt
     FROM conversations c JOIN contacts ct ON ct.id = c.contact_id
@@ -71,11 +81,17 @@ export async function sendAgentText(organizationId: string, userId: string, conv
     throw new Error("A janela de atendimento encerrou. Envie um template aprovado.");
   }
   const id = clientId || crypto.randomUUID();
+  let replyToMetaMessageId: string | null = null;
+  if (replyToMessageId) {
+    const [replyRows] = await pool.execute<RowDataPacket[]>("SELECT meta_message_id AS metaMessageId FROM messages WHERE id = ? AND conversation_id = ? AND organization_id = ? LIMIT 1", [replyToMessageId, conversationId, organizationId]);
+    replyToMetaMessageId = replyRows[0]?.metaMessageId ? String(replyRows[0].metaMessageId) : null;
+    if (!replyToMetaMessageId) throw new Error("A mensagem selecionada ainda não pode ser respondida.");
+  }
   await pool.execute(`INSERT INTO messages
-    (id, organization_id, conversation_id, direction, type, text_body, status, sent_by_user_id)
-    VALUES (?, ?, ?, 'outbound', 'text', ?, 'queued', ?)`, [id, organizationId, conversationId, body, userId]);
+    (id, organization_id, conversation_id, reply_to_message_id, reply_to_meta_message_id, direction, type, text_body, status, sent_by_user_id)
+    VALUES (?, ?, ?, ?, ?, 'outbound', 'text', ?, 'queued', ?)`, [id, organizationId, conversationId, replyToMessageId ?? null, replyToMetaMessageId, body, userId]);
   try {
-    const result = await sendText(String(conversation.waId), body);
+    const result = await sendText(String(conversation.waId), body, replyToMetaMessageId ?? undefined);
     await pool.execute("UPDATE messages SET meta_message_id = ?, status = 'sent', sent_at = NOW(3) WHERE id = ?", [result.messageId, id]);
     await pool.execute("UPDATE conversations SET last_message_preview = ?, last_message_at = NOW(3), status = 'open', first_response_at = COALESCE(first_response_at, NOW(3)) WHERE id = ?", [body.slice(0, 500), conversationId]);
   } catch (error) {
@@ -85,6 +101,21 @@ export async function sendAgentText(organizationId: string, userId: string, conv
     publish(organizationId, { type: "message", conversationId });
   }
   return { id };
+}
+
+export async function reactToMessage(organizationId: string, userId: string, conversationId: string, messageId: string, emoji: string) {
+  const [rows] = await pool.execute<RowDataPacket[]>(`SELECT m.id, m.meta_message_id AS metaMessageId, ct.wa_id AS waId
+    FROM messages m JOIN conversations c ON c.id = m.conversation_id JOIN contacts ct ON ct.id = c.contact_id
+    WHERE m.id = ? AND m.conversation_id = ? AND m.organization_id = ? LIMIT 1`, [messageId, conversationId, organizationId]);
+  const target = rows[0]; if (!target?.metaMessageId) throw new Error("Esta mensagem ainda não aceita reações.");
+  await sendReaction(String(target.waId), String(target.metaMessageId), emoji);
+  if (!emoji) await pool.execute("DELETE FROM message_reactions WHERE organization_id = ? AND target_meta_message_id = ? AND actor_key = 'business'", [organizationId, target.metaMessageId]);
+  else await pool.execute(`INSERT INTO message_reactions
+    (id, organization_id, conversation_id, target_message_id, target_meta_message_id, direction, actor_key, emoji, sent_by_user_id)
+    VALUES (?, ?, ?, ?, ?, 'outbound', 'business', ?, ?)
+    ON DUPLICATE KEY UPDATE emoji = VALUES(emoji), sent_by_user_id = VALUES(sent_by_user_id), updated_at = NOW(3)`,
+    [crypto.randomUUID(), organizationId, conversationId, target.id, target.metaMessageId, emoji, userId]);
+  publish(organizationId, { type: "reaction", conversationId, messageId }); return { ok: true };
 }
 
 export async function sendAgentTemplate(organizationId: string, userId: string, conversationId: string, name: string, language: string, components: unknown[]) {
@@ -112,7 +143,7 @@ export async function sendAgentTemplate(organizationId: string, userId: string, 
 }
 
 export async function sendAgentMedia(organizationId: string, userId: string, conversationId: string, input: {
-  buffer: Buffer; mimeType: string; fileName: string; caption?: string;
+  buffer: Buffer; mimeType: string; fileName: string; caption?: string; voice?: boolean;
 }) {
   const [rows] = await pool.execute<RowDataPacket[]>(`SELECT ct.wa_id AS waId, c.service_window_expires_at AS expiresAt
     FROM conversations c JOIN contacts ct ON ct.id = c.contact_id
@@ -129,9 +160,9 @@ export async function sendAgentMedia(organizationId: string, userId: string, con
     [id, organizationId, conversationId, type, preview, JSON.stringify({ mimeType: input.mimeType, fileName: input.fileName }), userId]);
   try {
     const mediaId = await uploadMedia(input.buffer, input.mimeType, input.fileName);
-    const result = await sendMedia(String(conversation.waId), type, mediaId, input.caption, input.fileName);
+    const result = await sendMedia(String(conversation.waId), type, mediaId, input.caption, input.fileName, input.voice);
     await pool.execute("UPDATE messages SET meta_message_id = ?, content = ?, status = 'sent', sent_at = NOW(3) WHERE id = ?",
-      [result.messageId, JSON.stringify({ mediaId, mimeType: input.mimeType, fileName: input.fileName, caption: input.caption ?? null }), id]);
+      [result.messageId, JSON.stringify({ mediaId, mimeType: input.mimeType, fileName: input.fileName, caption: input.caption ?? null, voice: Boolean(input.voice) }), id]);
     await pool.execute("UPDATE conversations SET last_message_preview = ?, last_message_at = NOW(3), status = 'open', first_response_at = COALESCE(first_response_at, NOW(3)) WHERE id = ?", [preview.slice(0, 500), conversationId]);
     await audit(organizationId, userId, "media.sent", "conversation", conversationId, { type, fileName: input.fileName });
   } catch (error) {

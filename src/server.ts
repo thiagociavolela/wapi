@@ -21,6 +21,8 @@ app.use(cookieParser());
 app.use("/webhooks", webhookRouter);
 app.use("/api/auth", authRouter);
 app.use("/api", apiRouter);
+app.use("/vendor/emoji-picker", express.static(path.resolve(root, "../node_modules/emoji-picker-element"), { fallthrough: false }));
+app.use("/vendor/emoji-data", express.static(path.resolve(root, "../node_modules/emoji-picker-element-data"), { fallthrough: false }));
 app.use(express.static(root, { extensions: ["html"] }));
 app.use((_req, res) => res.status(404).json({ error: "Rota não encontrada." }));
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
