@@ -86,7 +86,9 @@ function layoutConversation() {
   const chat = $('#chat'); const composer = $('#composer'); const alert = $('#composer-alert'); const messages = $('#message-list');
   composer.hidden = false; composer.classList.remove('hidden');
   if (!state.recorder) composer.classList.remove('recording');
-  chat.style.height = `${chat.parentElement.clientHeight}px`;
+  const panelRect = chat.parentElement.getBoundingClientRect();
+  chat.style.height = `${panelRect.height}px`;
+  Object.assign(composer.style, { position: 'fixed', left: `${panelRect.left + 22}px`, right: `${Math.max(innerWidth - panelRect.right + 22, 22)}px`, bottom: '18px', display: 'flex', visibility: 'visible' });
   const reserved = composer.offsetHeight + 36 + (alert.classList.contains('hidden') ? 0 : alert.offsetHeight);
   messages.style.bottom = `${Math.max(reserved, 100)}px`;
 }
