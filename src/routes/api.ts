@@ -2,7 +2,8 @@ import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { requireAuth } from "../modules/auth/auth.js";
-import { addNote, assignConversation, changeStatus, countConversations, getMessageMedia, getMessages, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, openConversationForAgent, reactToMessage, replaceTags, retryAgentMedia, sendAgentMedia, sendAgentTemplate, sendAgentText, signalAgentTyping, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
+import { addNote, assignConversation, changeStatus, countConversations, getMessageMedia, getMessages, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, markConversationUnread, openConversationForAgent, reactToMessage, replaceTags, retryAgentMedia, sendAgentMedia, sendAgentTemplate, sendAgentText, signalAgentTyping, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
+import { cancelScheduledMessage, createScheduledMessage, listScheduledMessages } from "../modules/conversations/scheduled.js";
 import { convertVoiceToOgg } from "../modules/conversations/audio.js";
 import { subscribe } from "../modules/realtime/events.js";
 import { isMetaConfigured } from "../config.js";
@@ -26,6 +27,19 @@ apiRouter.get("/conversations", async (req, res) => {
 });
 apiRouter.get("/conversations/:id/messages", async (req, res) => res.json(await getMessages(req.auth!.organizationId, String(req.params.id), req.query.before ? String(req.query.before) : undefined)));
 apiRouter.post("/conversations/:id/read", async (req, res) => res.json({ ok: await markConversationRead(req.auth!.organizationId, String(req.params.id)) }));
+apiRouter.post("/conversations/:id/unread", async (req, res) => res.json({ ok: await markConversationUnread(req.auth!.organizationId, String(req.params.id)) }));
+apiRouter.get("/conversations/:id/scheduled", async (req, res) => res.json({ items: await listScheduledMessages(req.auth!.organizationId, String(req.params.id)) }));
+apiRouter.post("/conversations/:id/scheduled", async (req, res) => {
+  const parsed = z.object({ body: z.string().trim().min(1).max(4096), scheduledFor: z.coerce.date() }).safeParse(req.body);
+  if (!parsed.success || parsed.data.scheduledFor.getTime() < Date.now() + 30000) return res.status(400).json({ error: "Escolha uma data futura e informe a mensagem." });
+  try { res.status(201).json(await createScheduledMessage(req.auth!.organizationId, req.auth!.id, String(req.params.id), parsed.data.body, parsed.data.scheduledFor)); }
+  catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao agendar mensagem." }); }
+});
+apiRouter.delete("/scheduled/:id", async (req, res) => {
+  const ok = await cancelScheduledMessage(req.auth!.organizationId, String(req.params.id));
+  if (!ok) return res.status(409).json({ error: "Este agendamento não pode mais ser cancelado." });
+  res.json({ ok: true });
+});
 apiRouter.get("/users", async (req, res) => res.json({ items: await listUsers(req.auth!.organizationId) }));
 apiRouter.get("/quick-replies", async (req, res) => res.json({ items: await listQuickReplies(req.auth!.organizationId) }));
 apiRouter.get("/templates", async (_req, res) => {

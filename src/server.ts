@@ -7,6 +7,7 @@ import { config } from "./config.js";
 import { migrate } from "./database/migrate.js";
 import { pool } from "./database/pool.js";
 import { ensureInitialAdmin } from "./modules/auth/auth.js";
+import { startScheduledMessageWorker } from "./modules/conversations/scheduled.js";
 import { apiRouter } from "./routes/api.js";
 import { authRouter } from "./routes/auth.js";
 import { webhookRouter } from "./routes/webhooks.js";
@@ -33,6 +34,7 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 async function start() {
   await migrate();
   await ensureInitialAdmin();
+  startScheduledMessageWorker();
   app.listen(config.PORT, () => console.log(`Central disponível em ${config.APP_URL}`));
 }
 

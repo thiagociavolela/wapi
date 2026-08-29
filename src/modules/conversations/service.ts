@@ -279,6 +279,12 @@ export async function markConversationRead(organizationId: string, conversationI
   return result.affectedRows > 0;
 }
 
+export async function markConversationUnread(organizationId: string, conversationId: string) {
+  const [result] = await pool.execute<ResultSetHeader>("UPDATE conversations SET unread_count = GREATEST(unread_count, 1) WHERE id = ? AND organization_id = ?", [conversationId, organizationId]);
+  if (result.affectedRows) publish(organizationId, { type: "conversation", conversationId });
+  return result.affectedRows > 0;
+}
+
 export async function assignConversation(organizationId: string, conversationId: string, userId: string | null, actorUserId?: string) {
   if (userId) {
     const [users] = await pool.execute<RowDataPacket[]>("SELECT id FROM users WHERE id = ? AND organization_id = ? AND active = TRUE", [userId, organizationId]);

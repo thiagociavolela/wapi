@@ -2,7 +2,7 @@ import { api } from './api.js';
 
 const $ = (selector) => document.querySelector(selector);
 const SYSTEM_TIME_ZONE = 'America/Sao_Paulo';
-const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], active: null, status: 'new', searchTimer: null, replyTo: null, actionMessage: null, emojiMode: 'insert', recorder: null, typingTimer: null, pendingOpenConversationId: null };
+const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], active: null, status: 'new', searchTimer: null, replyTo: null, actionMessage: null, contextConversation: null, assignmentConversationId: null, scheduleConversationId: null, emojiMode: 'insert', recorder: null, typingTimer: null, pendingOpenConversationId: null };
 
 function escapeHtml(value = '') { const node = document.createElement('div'); node.textContent = String(value); return node.innerHTML; }
 function initials(name = '?') { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase(); }
@@ -169,6 +169,64 @@ async function loadTags() {
 function openDialog(id) { const dialog = $(`#${id}`); if (!dialog.open) dialog.showModal(); }
 function closeDialog(id) { const dialog = $(`#${id}`); if (dialog.open) dialog.close(); }
 
+function closeConversationActions() { $('#conversation-actions').classList.add('hidden'); state.contextConversation = null; }
+function openConversationActions(conversation, x, y) {
+  state.contextConversation = conversation;
+  $('#context-avatar').textContent = initials(displayName(conversation)); $('#context-name').textContent = displayName(conversation); $('#context-phone').textContent = conversation.phone || '';
+  const resolved = conversation.status === 'resolved'; $('#context-status-label').textContent = resolved ? 'Reabrir conversa' : 'Concluir conversa'; $('#context-status-help').textContent = resolved ? 'Mover para em atendimento' : 'Mover para concluídas';
+  const menu = $('#conversation-actions'); menu.classList.remove('hidden');
+  const rect = menu.getBoundingClientRect(); menu.style.left = `${Math.max(12, Math.min(x, innerWidth - rect.width - 12))}px`; menu.style.top = `${Math.max(12, Math.min(y, innerHeight - rect.height - 12))}px`;
+}
+
+function saoPauloInputValue(minutesAhead = 30) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: SYSTEM_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(Date.now() + minutesAhead * 60000));
+  const value = Object.fromEntries(parts.map(part => [part.type, part.value])); return `${value.year}-${value.month}-${value.day}T${value.hour}:${value.minute}`;
+}
+
+async function loadScheduledMessages() {
+  if (!state.scheduleConversationId) return;
+  const data = await api(`/api/conversations/${state.scheduleConversationId}/scheduled`);
+  $('#scheduled-list').innerHTML = data.items.length ? `<div class="scheduled-title">Próximos agendamentos</div>${data.items.map(item => `<article><div><strong>${escapeHtml(item.body)}</strong><small>${dateTime(item.scheduledFor)} · ${item.status === 'failed' ? escapeHtml(item.errorMessage || 'Falhou') : item.status === 'processing' ? 'Processando' : 'Agendada'}</small></div>${item.status === 'pending' ? `<button type="button" data-cancel-schedule="${item.id}" title="Cancelar agendamento">×</button>` : ''}</article>`).join('')}` : '';
+}
+
+async function openScheduleDialog(conversation) {
+  state.scheduleConversationId = conversation.id; $('#schedule-avatar').textContent = initials(displayName(conversation)); $('#schedule-name').textContent = displayName(conversation); $('#schedule-body').value = ''; $('#schedule-at').value = saoPauloInputValue(); $('#schedule-at').min = saoPauloInputValue(1); $('#schedule-error').textContent = '';
+  await loadScheduledMessages(); openDialog('schedule-dialog');
+}
+
+$('#conversation-list').addEventListener('contextmenu', event => {
+  const button = event.target.closest('[data-id]'); if (!button) return; event.preventDefault();
+  const conversation = state.conversations.find(item => item.id === button.dataset.id); if (conversation) openConversationActions(conversation, event.clientX, event.clientY);
+});
+
+$('#conversation-actions').addEventListener('click', async event => {
+  const button = event.target.closest('[data-conversation-action]'); const conversation = state.contextConversation; if (!button || !conversation) return;
+  const action = button.dataset.conversationAction; closeConversationActions();
+  try {
+    if (action === 'unread') { await api(`/api/conversations/${conversation.id}/unread`, { method: 'POST' }); await loadConversations(false); toast('Conversa marcada como não lida.'); }
+    if (action === 'schedule') await openScheduleDialog(conversation);
+    if (action === 'transfer') { state.assignmentConversationId = conversation.id; $('#agent-select').value = conversation.assignedUserId || ''; openDialog('assign-dialog'); }
+    if (action === 'urgent') { await api(`/api/conversations/${conversation.id}/routing`, { method: 'PATCH', body: JSON.stringify({ priority: 'urgent' }) }); await loadConversations(); toast('Conversa marcada como urgente.'); }
+    if (action === 'copy-phone') { await navigator.clipboard.writeText(conversation.phone || ''); toast('Telefone copiado.'); }
+    if (action === 'toggle-status') {
+      if (conversation.status === 'resolved') await api(`/api/conversations/${conversation.id}/open`, { method: 'POST' });
+      else await api(`/api/conversations/${conversation.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'resolved' }) });
+      await loadConversations(false); if (state.active?.id === conversation.id) { state.active.status = conversation.status === 'resolved' ? 'open' : 'resolved'; $('#status').value = state.active.status; }
+      toast(conversation.status === 'resolved' ? 'Conversa reaberta.' : 'Conversa concluída.');
+    }
+  } catch (error) { toast(error.message); }
+});
+
+$('#schedule-form').addEventListener('submit', async event => {
+  event.preventDefault(); const submit = event.submitter; submit.disabled = true; $('#schedule-error').textContent = '';
+  try { await api(`/api/conversations/${state.scheduleConversationId}/scheduled`, { method: 'POST', body: JSON.stringify({ body: $('#schedule-body').value, scheduledFor: $('#schedule-at').value }) }); $('#schedule-body').value = ''; await loadScheduledMessages(); toast('Mensagem agendada com sucesso.'); }
+  catch (error) { $('#schedule-error').textContent = error.message; } finally { submit.disabled = false; }
+});
+$('#scheduled-list').addEventListener('click', async event => { const button = event.target.closest('[data-cancel-schedule]'); if (!button) return; try { await api(`/api/scheduled/${button.dataset.cancelSchedule}`, { method: 'DELETE' }); await loadScheduledMessages(); toast('Agendamento cancelado.'); } catch (error) { toast(error.message); } });
+document.addEventListener('click', event => { if (!event.target.closest('#conversation-actions')) closeConversationActions(); });
+document.addEventListener('keydown', event => { if (event.key === 'Escape') closeConversationActions(); });
+window.addEventListener('blur', closeConversationActions);
+
 $('#conversation-list').addEventListener('click', event => {
   const button = event.target.closest('[data-id]'); if (!button) return;
   const conversation = state.conversations.find(item => item.id === button.dataset.id);
@@ -295,7 +353,7 @@ function updateVoiceTime() { if (!state.recorder) return; const seconds = Math.f
 $('#cancel-voice').addEventListener('click', () => { if (state.recorder) { state.recorder.send = false; state.recorder.recorder.stop(); } });
 $('#send-voice').addEventListener('click', () => { if (state.recorder) { state.recorder.send = true; state.recorder.recorder.stop(); } });
 async function sendVoiceBlob(blob) { const form = new FormData(); form.append('file', blob, 'gravacao.webm'); toast('Enviando áudio…'); try { await api(`/api/conversations/${state.active.id}/voice`, { method: 'POST', body: form }); await Promise.all([loadMessages(), loadConversations()]); toast('Áudio enviado.'); } catch (error) { toast(error.message); } }
-$('#assign').addEventListener('click', () => { if (!state.active) return; const assigned = state.users.find(user => user.name === state.active.assignedUserName); $('#agent-select').value = assigned?.id || state.user.id; openDialog('assign-dialog'); });
+$('#assign').addEventListener('click', () => { if (!state.active) return; state.assignmentConversationId = state.active.id; const assigned = state.users.find(user => user.name === state.active.assignedUserName); $('#agent-select').value = assigned?.id || state.user.id; openDialog('assign-dialog'); });
 $('#detail-assign-shortcut').addEventListener('click', () => $('#assign').click());
 $('#status').addEventListener('change', async event => { await api(`/api/conversations/${state.active.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: event.target.value }) }); await loadConversations(); });
 $('#team-select').addEventListener('change', async event => { await api(`/api/conversations/${state.active.id}/routing`, { method: 'PATCH', body: JSON.stringify({ teamId: event.target.value || null }) }); await loadConversations(); toast('Equipe atualizada.'); });
@@ -331,7 +389,7 @@ $('#add-note').addEventListener('click', () => { if (state.active) openDialog('n
 $('#add-tag').addEventListener('click', () => { if (state.active) openDialog('tag-dialog'); });
 $('#edit-contact').addEventListener('click', () => { if (!state.active) return; $('#contact-name').value = displayName(state.active); openDialog('contact-dialog'); });
 document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => closeDialog(button.dataset.close)));
-$('#assign-form').addEventListener('submit', async event => { event.preventDefault(); await api(`/api/conversations/${state.active.id}/assign`, { method: 'POST', body: JSON.stringify({ userId: $('#agent-select').value || null }) }); closeDialog('assign-dialog'); await loadConversations(); await openConversation(state.active.id); toast('Conversa atribuída.'); });
+$('#assign-form').addEventListener('submit', async event => { event.preventDefault(); const id = state.assignmentConversationId || state.active?.id; if (!id) return; await api(`/api/conversations/${id}/assign`, { method: 'POST', body: JSON.stringify({ userId: $('#agent-select').value || null }) }); closeDialog('assign-dialog'); state.assignmentConversationId = null; await loadConversations(); if (state.active?.id === id) await openConversation(id); toast('Atendimento transferido.'); });
 $('#note-form').addEventListener('submit', async event => { event.preventDefault(); await api(`/api/conversations/${state.active.id}/notes`, { method: 'POST', body: JSON.stringify({ body: $('#note-body').value }) }); $('#note-body').value = ''; closeDialog('note-dialog'); await loadNotes(); toast('Anotação salva.'); });
 $('#tag-form').addEventListener('submit', async event => { event.preventDefault(); const name = $('#tag-name').value.trim().toLowerCase(); const names = [...new Set([...state.tags.map(tag => tag.name), name])]; await api(`/api/conversations/${state.active.id}/tags`, { method: 'PUT', body: JSON.stringify({ names }) }); $('#tag-name').value = ''; closeDialog('tag-dialog'); await Promise.all([loadTags(), loadConversations()]); toast('Etiqueta adicionada.'); });
 $('#tag-list').addEventListener('click', async event => { const button = event.target.closest('[data-remove-tag]'); if (!button) return; const names = state.tags.map(tag => tag.name).filter(name => name !== button.dataset.removeTag); await api(`/api/conversations/${state.active.id}/tags`, { method: 'PUT', body: JSON.stringify({ names }) }); await Promise.all([loadTags(), loadConversations()]); });
