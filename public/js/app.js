@@ -74,7 +74,7 @@ async function openConversation(id) {
   $('#detail-phone').textContent = state.active.phone;
   $('#chat-avatar').textContent = $('#detail-avatar').textContent = initials(name);
   $('#detail-agent').textContent = state.active.assignedUserName || 'Não atribuído';
-  $('#assign').textContent = state.active.assignedUserName ? 'Reatribuir' : 'Assumir conversa';
+  $('#assign').querySelector('span').textContent = state.active.assignedUserName ? 'Reatribuir' : 'Assumir conversa';
   $('#status').value = state.active.status;
   $('#team-select').value = state.active.teamId || ''; $('#priority-select').value = state.active.priority || 'normal';
   renderContactActivity(); updateWindow(); await Promise.all([loadMessages(), loadNotes(), loadTags(), api(`/api/conversations/${id}/read`, { method: 'POST' })]);

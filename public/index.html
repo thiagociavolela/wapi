@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#090a11">
-  <title>Central de atendimento</title><link rel="stylesheet" href="/css/app.css?v=23">
+  <title>Central de atendimento</title><link rel="stylesheet" href="/css/app.css?v=24">
 </head>
 <body>
   <div class="app-shell">
@@ -32,7 +32,7 @@
           <div class="header-contact-avatar"><div class="avatar" id="chat-avatar"></div><span id="contact-presence-dot"></span></div><div class="grow header-contact-copy"><div class="chat-title-row"><h2 id="chat-name"></h2><span class="header-channel"><svg viewBox="0 0 24 24"><path d="M20 11.5a8 8 0 0 1-11.8 7L4 20l1.5-4.1A8 8 0 1 1 20 11.5z"/></svg> WhatsApp</span></div><p class="chat-subtitle"><span id="contact-activity">Carregando atividade…</span></p></div>
           <div class="header-controls"><span id="window-badge" class="badge"></span>
             <label class="select-wrap"><span>Status</span><select id="status"><option value="new">Nova</option><option value="open">Em atendimento</option><option value="pending">Pendente</option><option value="resolved">Resolvida</option></select></label>
-            <button id="assign" class="primary compact">Assumir conversa</button>
+            <button id="assign" class="primary compact header-assign"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8M16 11l2 2 4-4"/></svg><span>Assumir conversa</span></button>
           </div>
         </header>
         <div id="message-list" class="message-list"></div><div id="composer-alert" class="composer-alert hidden"></div>
