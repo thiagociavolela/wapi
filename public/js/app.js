@@ -121,7 +121,7 @@ function renderMessages() {
     previousDay = currentDay; previousDirection = item.direction;
     return `${separator}<div class="message-row ${item.direction} ${grouped ? 'same-author' : 'new-author'}" data-message-id="${item.id}"><article class="bubble">
       ${replyContent(item)}${item.senderName ? `<small>${escapeHtml(item.senderName)}</small>` : ''}${messageContent(item)}
-      <footer>${item.status === 'failed' && item.direction === 'outbound' ? `<button type="button" class="message-retry" data-retry-id="${item.id}">Reenviar</button>` : ''}<time>${time(item.createdAt)}</time>${item.direction === 'outbound' ? `<span class="message-status ${item.status}" title="${statusLabel(item.status)}">${statusIcon(item.status)}</span>` : ''}</footer>
+      <footer>${item.status === 'failed' && item.direction === 'outbound' ? `<button type="button" class="message-retry" data-retry-id="${item.id}" title="${escapeHtml(item.errorMessage || 'Falha no envio')}">Reenviar</button>` : ''}<time>${time(item.createdAt)}</time>${item.direction === 'outbound' ? `<span class="message-status ${item.status}" title="${escapeHtml(item.errorMessage || statusLabel(item.status))}">${statusIcon(item.status)}</span>` : ''}</footer>
       ${reactionContent(item)}</article><button type="button" class="message-more" data-open-actions="${item.id}" aria-label="Ações da mensagem">⌄</button></div>`;
   }).join('') : '<div class="empty">Ainda não há mensagens.</div>';
   $('#message-list').scrollTop = $('#message-list').scrollHeight;
@@ -199,9 +199,15 @@ async function sendOptimisticMessage(conversationId, text) {
   }
 }
 
-$('#message-list').addEventListener('click', event => {
+$('#message-list').addEventListener('click', async event => {
   const button = event.target.closest('[data-retry-id]'); if (!button) return;
   const failed = state.pendingMessages.find(item => item.id === button.dataset.retryId) || state.messages.find(item => item.id === button.dataset.retryId); if (!failed) return;
+  if (failed.type !== 'text') {
+    button.disabled = true;
+    try { await api(`/api/conversations/${state.active.id}/messages/${failed.id}/retry-media`, { method: 'POST' }); await Promise.all([loadMessages(), loadConversations()]); toast('Mídia reenviada.'); }
+    catch (error) { toast(error.message); button.disabled = false; }
+    return;
+  }
   state.pendingMessages = state.pendingMessages.filter(item => item.id !== failed.id);
   sendOptimisticMessage(failed.conversationId || state.active.id, failed.textBody);
 });

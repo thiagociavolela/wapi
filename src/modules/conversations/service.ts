@@ -160,6 +160,7 @@ export async function sendAgentMedia(organizationId: string, userId: string, con
     [id, organizationId, conversationId, type, preview, JSON.stringify({ mimeType: input.mimeType, fileName: input.fileName }), userId]);
   try {
     const mediaId = await uploadMedia(input.buffer, input.mimeType, input.fileName);
+    await pool.execute("UPDATE messages SET content = ? WHERE id = ?", [JSON.stringify({ mediaId, mimeType: input.mimeType, fileName: input.fileName, caption: input.caption ?? null, voice: Boolean(input.voice) }), id]);
     const result = await sendMedia(String(conversation.waId), type, mediaId, input.caption, input.fileName, input.voice);
     await pool.execute("UPDATE messages SET meta_message_id = ?, content = ?, status = 'sent', sent_at = NOW(3) WHERE id = ?",
       [result.messageId, JSON.stringify({ mediaId, mimeType: input.mimeType, fileName: input.fileName, caption: input.caption ?? null, voice: Boolean(input.voice) }), id]);
@@ -170,6 +171,25 @@ export async function sendAgentMedia(organizationId: string, userId: string, con
     throw error;
   } finally { publish(organizationId, { type: "message", conversationId }); }
   return { id };
+}
+
+export async function retryAgentMedia(organizationId: string, userId: string, conversationId: string, messageId: string) {
+  const [rows] = await pool.execute<RowDataPacket[]>(`SELECT m.id, m.type, m.content, m.text_body AS textBody,
+    ct.wa_id AS waId, c.service_window_expires_at AS expiresAt
+    FROM messages m JOIN conversations c ON c.id = m.conversation_id JOIN contacts ct ON ct.id = c.contact_id
+    WHERE m.id = ? AND m.conversation_id = ? AND m.organization_id = ? AND m.direction = 'outbound' AND m.status = 'failed' LIMIT 1`,
+  [messageId, conversationId, organizationId]);
+  const message = rows[0];
+  if (!message || !["image", "audio", "video", "document"].includes(String(message.type))) throw new Error("Esta mídia não está disponível para reenvio.");
+  if (!message.expiresAt || new Date(message.expiresAt).getTime() <= Date.now()) throw new Error("A janela de atendimento encerrou. Envie um template aprovado.");
+  const content = typeof message.content === "string" ? JSON.parse(message.content || "{}") : (message.content || {});
+  if (!content.mediaId) throw new Error("O arquivo original não está mais disponível para reenvio.");
+  const type = String(message.type) as "image" | "audio" | "video" | "document";
+  const result = await sendMedia(String(message.waId), type, String(content.mediaId), content.caption ?? undefined, content.fileName ?? undefined, false);
+  await pool.execute("UPDATE messages SET meta_message_id = ?, status = 'sent', error_code = NULL, error_message = NULL, sent_at = NOW(3) WHERE id = ?", [result.messageId, messageId]);
+  await audit(organizationId, userId, "media.retried", "conversation", conversationId, { messageId, type });
+  publish(organizationId, { type: "message", conversationId });
+  return { id: messageId, metaMessageId: result.messageId };
 }
 
 export async function getMessageMedia(organizationId: string, messageId: string) {

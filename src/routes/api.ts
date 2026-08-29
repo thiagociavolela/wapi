@@ -2,7 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { requireAuth } from "../modules/auth/auth.js";
-import { addNote, assignConversation, changeStatus, countConversations, getMessageMedia, getMessages, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, reactToMessage, replaceTags, sendAgentMedia, sendAgentTemplate, sendAgentText, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
+import { addNote, assignConversation, changeStatus, countConversations, getMessageMedia, getMessages, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, reactToMessage, replaceTags, retryAgentMedia, sendAgentMedia, sendAgentTemplate, sendAgentText, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
 import { convertVoiceToOgg } from "../modules/conversations/audio.js";
 import { subscribe } from "../modules/realtime/events.js";
 import { isMetaConfigured } from "../config.js";
@@ -78,8 +78,12 @@ apiRouter.post("/conversations/:id/voice", mediaUpload.single("file"), async (re
   try {
     const buffer = await convertVoiceToOgg(req.file.buffer);
     if (buffer.length > 16 * 1024 * 1024) return res.status(413).json({ error: "O áudio convertido excede 16 MB." });
-    res.status(201).json(await sendAgentMedia(req.auth!.organizationId, req.auth!.id, String(req.params.id), { buffer, mimeType: "audio/ogg", fileName: "gravacao.ogg", voice: true }));
+    res.status(201).json(await sendAgentMedia(req.auth!.organizationId, req.auth!.id, String(req.params.id), { buffer, mimeType: "audio/ogg", fileName: "gravacao.ogg" }));
   } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar áudio." }); }
+});
+apiRouter.post("/conversations/:id/messages/:messageId/retry-media", async (req, res) => {
+  try { res.json(await retryAgentMedia(req.auth!.organizationId, req.auth!.id, String(req.params.id), String(req.params.messageId))); }
+  catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao reenviar mídia." }); }
 });
 apiRouter.get("/messages/:id/media", async (req, res) => {
   try {
