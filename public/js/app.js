@@ -2,7 +2,7 @@ import { api } from './api.js';
 
 const $ = (selector) => document.querySelector(selector);
 const SYSTEM_TIME_ZONE = 'America/Sao_Paulo';
-const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], active: null, status: 'new', searchTimer: null, replyTo: null, actionMessage: null, contextConversation: null, assignmentConversationId: null, scheduleConversationId: null, emojiMode: 'insert', recorder: null, typingTimer: null, pendingOpenConversationId: null };
+const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], pastedFiles: [], pastedFileIndex: 0, pasteObjectUrls: [], active: null, status: 'new', searchTimer: null, replyTo: null, actionMessage: null, contextConversation: null, assignmentConversationId: null, scheduleConversationId: null, emojiMode: 'insert', recorder: null, typingTimer: null, pendingOpenConversationId: null };
 
 function escapeHtml(value = '') { const node = document.createElement('div'); node.textContent = String(value); return node.innerHTML; }
 function initials(name = '?') { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase(); }
@@ -378,11 +378,45 @@ $('#template-button').addEventListener('click', async () => {
   } catch (error) { $('#template-error').textContent = error.message; }
 });
 $('#attach-button').addEventListener('click', () => { if (state.active && windowOpen(state.active)) $('#media-input').click(); else toast('A janela de atendimento está encerrada.'); });
+const acceptedPasteTypes = /^(image|audio|video)\//;
+const acceptedDocumentTypes = ['application/pdf', 'text/plain', 'text/csv', 'application/zip', 'application/msword', 'application/vnd.ms-excel', 'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'];
+function validAttachment(file) { return file && file.size <= 20 * 1024 * 1024 && (acceptedPasteTypes.test(file.type) || acceptedDocumentTypes.includes(file.type)); }
+function attachmentKind(file) { if (file.type.startsWith('image/')) return 'image'; if (file.type.startsWith('video/')) return 'video'; if (file.type.startsWith('audio/')) return 'audio'; if (file.type === 'application/pdf') return 'pdf'; return 'document'; }
+function clearPasteObjectUrls() { state.pasteObjectUrls.forEach(URL.revokeObjectURL); state.pasteObjectUrls = []; }
+function closePastePreview() { clearPasteObjectUrls(); state.pastedFiles = []; state.pastedFileIndex = 0; $('#paste-caption').value = ''; if ($('#paste-preview-dialog').open) $('#paste-preview-dialog').close(); }
+function renderPastePreview() {
+  clearPasteObjectUrls(); const file = state.pastedFiles[state.pastedFileIndex]; if (!file) return closePastePreview();
+  const kind = attachmentKind(file); const url = URL.createObjectURL(file); state.pasteObjectUrls.push(url);
+  $('#paste-file-info').textContent = `${file.name || 'Imagem colada'} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
+  $('#paste-preview-stage').innerHTML = kind === 'image' ? `<img src="${url}" alt="Prévia de ${escapeHtml(file.name || 'imagem')}">` : kind === 'video' ? `<video src="${url}" controls></video>` : kind === 'audio' ? `<div class="paste-document-preview"><span>♫</span><strong>${escapeHtml(file.name)}</strong><audio src="${url}" controls></audio></div>` : kind === 'pdf' ? `<iframe src="${url}" title="Prévia do PDF"></iframe>` : `<div class="paste-document-preview"><span>▤</span><strong>${escapeHtml(file.name || 'Documento')}</strong><small>${escapeHtml(file.type || 'Arquivo')}</small></div>`;
+  $('#paste-thumbnails').innerHTML = state.pastedFiles.map((item, index) => { const itemKind = attachmentKind(item); const thumbUrl = itemKind === 'image' ? URL.createObjectURL(item) : ''; if (thumbUrl) state.pasteObjectUrls.push(thumbUrl); return `<button type="button" class="paste-thumbnail ${index === state.pastedFileIndex ? 'active' : ''}" data-paste-index="${index}" title="${escapeHtml(item.name || 'Arquivo')}">${thumbUrl ? `<img src="${thumbUrl}" alt="">` : `<span>${itemKind === 'pdf' ? 'PDF' : itemKind === 'video' ? '▶' : itemKind === 'audio' ? '♫' : 'DOC'}</span>`}<i data-remove-paste="${index}">×</i></button>`; }).join('');
+}
+function openPastePreview(files) {
+  if (!state.active) return toast('Selecione uma conversa antes de anexar.');
+  if (!windowOpen(state.active)) return toast('A janela de atendimento está encerrada. Use um template aprovado.');
+  const accepted = [...files].filter(validAttachment); const rejected = files.length - accepted.length;
+  if (!accepted.length) return toast('Arquivo inválido ou maior que 20 MB.');
+  state.pastedFiles.push(...accepted); state.pastedFileIndex = Math.max(0, state.pastedFiles.length - accepted.length); renderPastePreview(); if (!$('#paste-preview-dialog').open) $('#paste-preview-dialog').showModal(); $('#paste-caption').focus();
+  if (rejected) toast(`${rejected} arquivo(s) não foram aceitos.`);
+}
+async function sendMediaFile(file, caption = '') { const form = new FormData(); form.append('file', file, file.name || `imagem-colada-${Date.now()}.png`); if (caption) form.append('caption', caption); return api(`/api/conversations/${state.active.id}/media`, { method: 'POST', body: form }); }
+$('#message').addEventListener('paste', event => { const files = [...(event.clipboardData?.files || [])]; if (!files.length) return; event.preventDefault(); openPastePreview(files); });
+$('#close-paste-preview').addEventListener('click', closePastePreview);
+$('#paste-preview-dialog').addEventListener('cancel', event => { event.preventDefault(); closePastePreview(); });
+$('#add-paste-files').addEventListener('click', () => $('#paste-files-input').click());
+$('#paste-files-input').addEventListener('change', event => { if (event.target.files?.length) openPastePreview([...event.target.files]); event.target.value = ''; });
+$('#paste-thumbnails').addEventListener('click', event => { const remove = event.target.closest('[data-remove-paste]'); if (remove) { event.stopPropagation(); const index = Number(remove.dataset.removePaste); state.pastedFiles.splice(index, 1); state.pastedFileIndex = Math.min(state.pastedFileIndex, state.pastedFiles.length - 1); renderPastePreview(); return; } const thumb = event.target.closest('[data-paste-index]'); if (thumb) { state.pastedFileIndex = Number(thumb.dataset.pasteIndex); renderPastePreview(); } });
+$('#paste-caption').addEventListener('keydown', event => { if (event.key === 'Enter' && event.ctrlKey) { event.preventDefault(); $('#send-paste-files').click(); } });
+$('#send-paste-files').addEventListener('click', async () => {
+  if (!state.pastedFiles.length || !state.active) return; const button = $('#send-paste-files'); button.disabled = true; const caption = $('#paste-caption').value.trim(); let sent = 0;
+  try { for (const file of state.pastedFiles) { await sendMediaFile(file, caption); sent += 1; } closePastePreview(); await Promise.all([loadMessages(), loadConversations()]); toast(sent > 1 ? `${sent} arquivos enviados.` : 'Arquivo enviado.'); }
+  catch (error) { if (sent) state.pastedFiles.splice(0, sent); renderPastePreview(); toast(error.message); } finally { button.disabled = false; }
+});
 $('#media-input').addEventListener('change', async event => {
   const file = event.target.files?.[0]; if (!file || !state.active) return;
-  const form = new FormData(); form.append('file', file); const caption = $('#message').value.trim(); if (caption) form.append('caption', caption);
+  const caption = $('#message').value.trim();
   $('#attach-button').disabled = true;
-  try { await api(`/api/conversations/${state.active.id}/media`, { method: 'POST', body: form }); $('#message').value = ''; await Promise.all([loadMessages(), loadConversations()]); toast('Arquivo enviado.'); }
+  try { await sendMediaFile(file, caption); $('#message').value = ''; await Promise.all([loadMessages(), loadConversations()]); toast('Arquivo enviado.'); }
   catch (error) { toast(error.message); } finally { event.target.value = ''; $('#attach-button').disabled = false; }
 });
 $('#add-note').addEventListener('click', () => { if (state.active) openDialog('note-dialog'); });
