@@ -2,7 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { requireAuth } from "../modules/auth/auth.js";
-import { addNote, assignConversation, changeStatus, countConversations, getMessageMedia, getMessages, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, reactToMessage, replaceTags, retryAgentMedia, sendAgentMedia, sendAgentTemplate, sendAgentText, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
+import { addNote, assignConversation, changeStatus, countConversations, getMessageMedia, getMessages, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, reactToMessage, replaceTags, retryAgentMedia, sendAgentMedia, sendAgentTemplate, sendAgentText, signalAgentTyping, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
 import { convertVoiceToOgg } from "../modules/conversations/audio.js";
 import { subscribe } from "../modules/realtime/events.js";
 import { isMetaConfigured } from "../config.js";
@@ -57,6 +57,10 @@ apiRouter.post("/conversations/:id/messages", async (req, res) => {
   } catch (error) {
     res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar mensagem." });
   }
+});
+apiRouter.post("/conversations/:id/typing", async (req, res) => {
+  try { res.json(await signalAgentTyping(req.auth!.organizationId, String(req.params.id))); }
+  catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao sinalizar digitação." }); }
 });
 apiRouter.post("/conversations/:id/messages/:messageId/reaction", async (req, res) => {
   const parsed = z.object({ emoji: z.string().max(32) }).safeParse(req.body);

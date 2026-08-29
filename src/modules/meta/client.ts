@@ -36,6 +36,18 @@ export const sendText = (to: string, body: string, replyToMetaMessageId?: string
 export const sendReaction = (to: string, messageId: string, emoji: string) =>
   sendMetaMessage(to, { type: "reaction", reaction: { message_id: messageId, emoji } });
 
+export async function sendTypingIndicator(messageId: string) {
+  if (!isMetaConfigured()) throw new Error("A WhatsApp Cloud API ainda não foi configurada.");
+  const response = await fetch(`https://graph.facebook.com/${config.META_GRAPH_VERSION}/${config.META_PHONE_NUMBER_ID}/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${config.META_ACCESS_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", status: "read", message_id: messageId, typing_indicator: { type: "text" } })
+  });
+  const payload = await response.json() as { success?: boolean; error?: { message?: string } };
+  if (!response.ok) throw new Error(payload.error?.message ?? `Falha da Meta (${response.status}).`);
+  return payload;
+}
+
 export const sendTemplate = (to: string, name: string, language: string, components: unknown[] = []) =>
   sendMetaMessage(to, { type: "template", template: { name, language: { code: language }, components } });
 

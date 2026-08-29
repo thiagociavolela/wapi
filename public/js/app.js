@@ -2,7 +2,7 @@ import { api } from './api.js';
 
 const $ = (selector) => document.querySelector(selector);
 const SYSTEM_TIME_ZONE = 'America/Sao_Paulo';
-const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], active: null, status: 'new', searchTimer: null, replyTo: null, actionMessage: null, emojiMode: 'insert', recorder: null };
+const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], active: null, status: 'new', searchTimer: null, replyTo: null, actionMessage: null, emojiMode: 'insert', recorder: null, typingTimer: null };
 
 function escapeHtml(value = '') { const node = document.createElement('div'); node.textContent = String(value); return node.innerHTML; }
 function initials(name = '?') { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase(); }
@@ -51,7 +51,7 @@ async function loadConversations(preserve = true) {
   document.querySelectorAll('[data-count]').forEach(badge => { badge.textContent = Number(data.counts?.[badge.dataset.count] || 0); });
   state.conversations = data.items;
   renderConversations();
-  if (preserve && state.active) state.active = state.conversations.find(item => item.id === state.active.id) || state.active;
+  if (preserve && state.active) { state.active = state.conversations.find(item => item.id === state.active.id) || state.active; renderContactActivity(); }
 }
 
 function renderConversations() {
@@ -71,14 +71,24 @@ async function openConversation(id) {
   renderConversations(); $('#no-chat').classList.add('hidden'); $('#chat').classList.remove('hidden'); $('#details').classList.remove('hidden');
   const name = displayName(state.active);
   $('#chat-name').textContent = $('#detail-name').textContent = name;
-  $('#chat-phone').textContent = $('#detail-phone').textContent = state.active.phone;
+  $('#detail-phone').textContent = state.active.phone;
   $('#chat-avatar').textContent = $('#detail-avatar').textContent = initials(name);
   $('#detail-agent').textContent = state.active.assignedUserName || 'Não atribuído';
   $('#assign').textContent = state.active.assignedUserName ? 'Reatribuir' : 'Assumir conversa';
   $('#status').value = state.active.status;
   $('#team-select').value = state.active.teamId || ''; $('#priority-select').value = state.active.priority || 'normal';
-  updateWindow(); await Promise.all([loadMessages(), loadNotes(), loadTags(), api(`/api/conversations/${id}/read`, { method: 'POST' })]);
+  renderContactActivity(); updateWindow(); await Promise.all([loadMessages(), loadNotes(), loadTags(), api(`/api/conversations/${id}/read`, { method: 'POST' })]);
   layoutConversation();
+}
+
+function renderContactActivity() {
+  if (!state.active) return;
+  const last = state.active.lastCustomerMessageAt ? new Date(state.active.lastCustomerMessageAt) : null;
+  const elapsed = last ? Date.now() - last.getTime() : Infinity; let label = 'Sem atividade recente'; let recent = false;
+  if (elapsed < 2 * 60 * 1000) { label = 'Ativo recentemente'; recent = true; }
+  else if (last && dayKey(last) === dayKey(new Date())) label = `Última mensagem hoje às ${time(last)}`;
+  else if (last) label = `Última atividade em ${dateTime(last)}`;
+  $('#contact-activity').textContent = label; $('#contact-presence-dot').classList.toggle('recent', recent);
 }
 
 function layoutConversation() {
@@ -264,7 +274,11 @@ $('#status').addEventListener('change', async event => { await api(`/api/convers
 $('#team-select').addEventListener('change', async event => { await api(`/api/conversations/${state.active.id}/routing`, { method: 'PATCH', body: JSON.stringify({ teamId: event.target.value || null }) }); await loadConversations(); toast('Equipe atualizada.'); });
 $('#priority-select').addEventListener('change', async event => { await api(`/api/conversations/${state.active.id}/routing`, { method: 'PATCH', body: JSON.stringify({ priority: event.target.value }) }); await loadConversations(); toast('Prioridade atualizada.'); });
 $('#logout').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); location.href = '/login.html'; });
-$('#message').addEventListener('input', event => { event.target.style.height = 'auto'; event.target.style.height = `${Math.min(event.target.scrollHeight, 140)}px`; });
+$('#message').addEventListener('input', event => {
+  event.target.style.height = 'auto'; event.target.style.height = `${Math.min(event.target.scrollHeight, 140)}px`;
+  if (!event.target.value.trim() || !state.active) return;
+  clearTimeout(state.typingTimer); state.typingTimer = setTimeout(() => api(`/api/conversations/${state.active.id}/typing`, { method: 'POST' }).catch(() => {}), 350);
+});
 $('#message').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); $('#composer').requestSubmit(); } });
 $('#mobile-back').addEventListener('click', () => $('.app-shell').classList.remove('chat-open'));
 $('#quick-replies-button').addEventListener('click', () => $('#quick-replies-popover').classList.toggle('hidden'));
@@ -353,3 +367,4 @@ function connectEvents() {
 }
 
 init().catch(error => toast(error.message));
+setInterval(renderContactActivity, 30000);

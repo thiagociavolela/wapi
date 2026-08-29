@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "../../database/pool.js";
 import { publish } from "../realtime/events.js";
-import { downloadMedia, sendMedia, sendReaction, sendTemplate, sendText, uploadMedia } from "../meta/client.js";
+import { downloadMedia, sendMedia, sendReaction, sendTemplate, sendText, sendTypingIndicator, uploadMedia } from "../meta/client.js";
 
 const DEFAULT_ORG_SQL = "SELECT id FROM organizations ORDER BY created_at LIMIT 1";
 
@@ -19,6 +19,7 @@ export async function listConversations(organizationId: string, search = "", sta
       c.service_window_expires_at AS serviceWindowExpiresAt,
       c.first_response_due_at AS firstResponseDueAt, c.first_response_at AS firstResponseAt, c.resolution_due_at AS resolutionDueAt,
       c.last_message_preview AS lastMessagePreview, c.last_message_at AS lastMessageAt,
+      (SELECT MAX(im.created_at) FROM messages im WHERE im.conversation_id = c.id AND im.direction = 'inbound') AS lastCustomerMessageAt,
       ct.id AS contactId, ct.name, ct.profile_name AS profileName, ct.phone, ct.wa_id AS waId,
       u.name AS assignedUserName, t.id AS teamId, t.name AS teamName, t.color AS teamColor,
       (SELECT GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR '||') FROM conversation_tags ctag JOIN tags t ON t.id = ctag.tag_id WHERE ctag.conversation_id = c.id) AS tagNames
@@ -68,6 +69,18 @@ export async function getMessages(organizationId: string, conversationId: string
     for (const item of items) item.reactions = reactions.filter((reaction) => reaction.targetMessageId === item.id);
   }
   return { items, hasMore };
+}
+
+const typingSignals = new Map<string, number>();
+export async function signalAgentTyping(organizationId: string, conversationId: string) {
+  const key = `${organizationId}:${conversationId}`; const now = Date.now();
+  if (now - (typingSignals.get(key) || 0) < 8000) return { ok: true, throttled: true };
+  const [rows] = await pool.execute<RowDataPacket[]>(`SELECT m.meta_message_id AS metaMessageId FROM messages m
+    WHERE m.organization_id = ? AND m.conversation_id = ? AND m.direction = 'inbound' AND m.meta_message_id IS NOT NULL
+    ORDER BY m.created_at DESC LIMIT 1`, [organizationId, conversationId]);
+  if (!rows[0]?.metaMessageId) return { ok: true, skipped: true };
+  await sendTypingIndicator(String(rows[0].metaMessageId)); typingSignals.set(key, now);
+  return { ok: true };
 }
 
 export async function sendAgentText(organizationId: string, userId: string, conversationId: string, body: string, clientId?: string, replyToMessageId?: string) {

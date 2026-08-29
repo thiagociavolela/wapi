@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#090a11">
-  <title>Central de atendimento</title><link rel="stylesheet" href="/css/app.css?v=22">
+  <title>Central de atendimento</title><link rel="stylesheet" href="/css/app.css?v=23">
 </head>
 <body>
   <div class="app-shell">
@@ -29,7 +29,7 @@
       <section id="chat" class="chat hidden">
         <header class="chat-header">
           <button id="mobile-back" class="icon-button mobile-only" aria-label="Voltar"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button>
-          <div class="avatar online" id="chat-avatar"></div><div class="grow"><div class="chat-title-row"><h2 id="chat-name"></h2><span class="official-channel">WhatsApp oficial</span></div><p class="chat-subtitle"><span id="chat-phone" class="muted"></span><span class="chat-subtitle-dot"></span><span>Cloud API conectada</span></p></div>
+          <div class="header-contact-avatar"><div class="avatar" id="chat-avatar"></div><span id="contact-presence-dot"></span></div><div class="grow header-contact-copy"><div class="chat-title-row"><h2 id="chat-name"></h2><span class="header-channel"><svg viewBox="0 0 24 24"><path d="M20 11.5a8 8 0 0 1-11.8 7L4 20l1.5-4.1A8 8 0 1 1 20 11.5z"/></svg> WhatsApp</span></div><p class="chat-subtitle"><span id="contact-activity">Carregando atividade…</span></p></div>
           <div class="header-controls"><span id="window-badge" class="badge"></span>
             <label class="select-wrap"><span>Status</span><select id="status"><option value="new">Nova</option><option value="open">Em atendimento</option><option value="pending">Pendente</option><option value="resolved">Resolvida</option></select></label>
             <button id="assign" class="primary compact">Assumir conversa</button>
@@ -66,5 +66,5 @@
   <dialog id="tag-dialog" class="modal"><form id="tag-form"><div class="modal-head"><div><p class="eyebrow">ORGANIZAÇÃO</p><h2>Adicionar etiqueta</h2></div><button type="button" data-close="tag-dialog">×</button></div><label>Nome<input id="tag-name" maxlength="60" placeholder="ex: cliente vip" required></label><div class="modal-actions"><button type="button" class="ghost" data-close="tag-dialog">Cancelar</button><button class="primary" type="submit">Adicionar</button></div></form></dialog>
   <dialog id="assign-dialog" class="modal"><form id="assign-form"><div class="modal-head"><div><p class="eyebrow">DISTRIBUIÇÃO</p><h2>Atribuir conversa</h2></div><button type="button" data-close="assign-dialog">×</button></div><label>Atendente<select id="agent-select" required></select></label><div class="modal-actions"><button type="button" class="ghost" data-close="assign-dialog">Cancelar</button><button class="primary" type="submit">Confirmar</button></div></form></dialog>
   <dialog id="contact-dialog" class="modal"><form id="contact-form"><div class="modal-head"><div><p class="eyebrow">CONTATO</p><h2>Editar contato</h2></div><button type="button" data-close="contact-dialog">×</button></div><label>Nome<input id="contact-name" maxlength="160" required></label><div class="modal-actions"><button type="button" class="ghost" data-close="contact-dialog">Cancelar</button><button class="primary" type="submit">Salvar</button></div></form></dialog>
-  <div id="toast" class="toast hidden"></div><script type="module" src="/vendor/emoji-picker/index.js"></script><script type="module" src="/js/app.js?v=21"></script>
+  <div id="toast" class="toast hidden"></div><script type="module" src="/vendor/emoji-picker/index.js"></script><script type="module" src="/js/app.js?v=22"></script>
 </body></html>
