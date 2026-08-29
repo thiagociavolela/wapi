@@ -21,7 +21,7 @@ export async function listConversations(organizationId: string, search = "", sta
       c.last_message_preview AS lastMessagePreview, c.last_message_at AS lastMessageAt,
       (SELECT MAX(im.created_at) FROM messages im WHERE im.conversation_id = c.id AND im.direction = 'inbound') AS lastCustomerMessageAt,
       ct.id AS contactId, ct.name, ct.profile_name AS profileName, ct.phone, ct.wa_id AS waId,
-      u.name AS assignedUserName, t.id AS teamId, t.name AS teamName, t.color AS teamColor,
+      c.assigned_user_id AS assignedUserId, u.name AS assignedUserName, t.id AS teamId, t.name AS teamName, t.color AS teamColor,
       (SELECT GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR '||') FROM conversation_tags ctag JOIN tags t ON t.id = ctag.tag_id WHERE ctag.conversation_id = c.id) AS tagNames
     FROM conversations c
     JOIN contacts ct ON ct.id = c.contact_id
@@ -290,6 +290,24 @@ export async function assignConversation(organizationId: string, conversationId:
     publish(organizationId, { type: "conversation", conversationId });
   }
   return result.affectedRows > 0;
+}
+
+export async function openConversationForAgent(organizationId: string, userId: string, conversationId: string) {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [rows] = await connection.execute<RowDataPacket[]>(`SELECT c.status, c.assigned_user_id AS assignedUserId, u.name AS assignedUserName
+      FROM conversations c LEFT JOIN users u ON u.id = c.assigned_user_id
+      WHERE c.id = ? AND c.organization_id = ? FOR UPDATE`, [conversationId, organizationId]);
+    const conversation = rows[0]; if (!conversation) throw new Error("Conversa não encontrada.");
+    if (conversation.status === "open" && conversation.assignedUserId && String(conversation.assignedUserId) !== userId) {
+      throw new Error(`Esta conversa já está em andamento com o atendente ${conversation.assignedUserName || "responsável"}.`);
+    }
+    await connection.execute("UPDATE conversations SET status = 'open', assigned_user_id = COALESCE(assigned_user_id, ?), resolved_at = NULL WHERE id = ? AND organization_id = ?", [userId, conversationId, organizationId]);
+    await connection.commit();
+  } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
+  await audit(organizationId, userId, "conversation.opened", "conversation", conversationId);
+  publish(organizationId, { type: "conversation", conversationId }); return { ok: true };
 }
 
 export async function changeStatus(organizationId: string, conversationId: string, status: string) {

@@ -2,7 +2,7 @@ import { api } from './api.js';
 
 const $ = (selector) => document.querySelector(selector);
 const SYSTEM_TIME_ZONE = 'America/Sao_Paulo';
-const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], active: null, status: 'new', searchTimer: null, replyTo: null, actionMessage: null, emojiMode: 'insert', recorder: null, typingTimer: null };
+const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], active: null, status: 'new', searchTimer: null, replyTo: null, actionMessage: null, emojiMode: 'insert', recorder: null, typingTimer: null, pendingOpenConversationId: null };
 
 function escapeHtml(value = '') { const node = document.createElement('div'); node.textContent = String(value); return node.innerHTML; }
 function initials(name = '?') { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase(); }
@@ -169,7 +169,34 @@ async function loadTags() {
 function openDialog(id) { const dialog = $(`#${id}`); if (!dialog.open) dialog.showModal(); }
 function closeDialog(id) { const dialog = $(`#${id}`); if (dialog.open) dialog.close(); }
 
-$('#conversation-list').addEventListener('click', event => { const button = event.target.closest('[data-id]'); if (button) openConversation(button.dataset.id); });
+$('#conversation-list').addEventListener('click', event => {
+  const button = event.target.closest('[data-id]'); if (!button) return;
+  const conversation = state.conversations.find(item => item.id === button.dataset.id);
+  if (conversation?.status === 'open' && conversation.assignedUserId && conversation.assignedUserId !== state.user.id) {
+    $('#conversation-busy-agent').textContent = conversation.assignedUserName || 'outro atendente'; openDialog('conversation-busy-dialog'); return;
+  }
+  if (conversation && ['new', 'resolved'].includes(state.status)) {
+    state.pendingOpenConversationId = conversation.id;
+    $('#conversation-open-name').textContent = displayName(conversation);
+    $('#conversation-open-message').textContent = state.status === 'resolved' ? 'Esta conversa está concluída. Ao continuar, ela será reaberta e movida para Em atendimento.' : 'Ao continuar, esta nova conversa será iniciada e movida para Em atendimento.';
+    $('#conversation-open-error').textContent = ''; openDialog('conversation-open-dialog'); return;
+  }
+  openConversation(button.dataset.id);
+});
+$('#confirm-conversation-open').addEventListener('click', async () => {
+  const id = state.pendingOpenConversationId; if (!id) return;
+  const button = $('#confirm-conversation-open'); button.disabled = true; $('#conversation-open-error').textContent = '';
+  try {
+    await api(`/api/conversations/${id}/open`, { method: 'POST' });
+    closeDialog('conversation-open-dialog'); state.pendingOpenConversationId = null; state.status = 'open';
+    document.querySelectorAll('.filter').forEach(item => item.classList.toggle('active', item.dataset.status === 'open'));
+    await loadConversations(false); await openConversation(id); toast('Conversa movida para Em atendimento.');
+  } catch (error) {
+    if (error.message.includes('já está em andamento')) { closeDialog('conversation-open-dialog'); $('#conversation-busy-agent').textContent = error.message.split('atendente ')[1]?.replace(/\.$/, '') || 'outro atendente'; openDialog('conversation-busy-dialog'); }
+    else $('#conversation-open-error').textContent = error.message;
+  }
+  finally { button.disabled = false; }
+});
 $('#search').addEventListener('input', () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(() => loadConversations(false), 300); });
 document.addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); $('#search').focus(); $('#search').select(); } });
 document.querySelectorAll('.filter').forEach(button => button.addEventListener('click', async () => {

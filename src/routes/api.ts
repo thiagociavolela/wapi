@@ -2,7 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { requireAuth } from "../modules/auth/auth.js";
-import { addNote, assignConversation, changeStatus, countConversations, getMessageMedia, getMessages, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, reactToMessage, replaceTags, retryAgentMedia, sendAgentMedia, sendAgentTemplate, sendAgentText, signalAgentTyping, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
+import { addNote, assignConversation, changeStatus, countConversations, getMessageMedia, getMessages, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, openConversationForAgent, reactToMessage, replaceTags, retryAgentMedia, sendAgentMedia, sendAgentTemplate, sendAgentText, signalAgentTyping, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
 import { convertVoiceToOgg } from "../modules/conversations/audio.js";
 import { subscribe } from "../modules/realtime/events.js";
 import { isMetaConfigured } from "../config.js";
@@ -43,6 +43,10 @@ apiRouter.patch("/conversations/:id/status", async (req, res) => {
   const parsed = z.enum(["new", "open", "pending", "resolved"]).safeParse(req.body.status);
   if (!parsed.success) return res.status(400).json({ error: "Status inválido." });
   res.json({ ok: await changeStatus(req.auth!.organizationId, String(req.params.id), parsed.data) });
+});
+apiRouter.post("/conversations/:id/open", async (req, res) => {
+  try { res.json(await openConversationForAgent(req.auth!.organizationId, req.auth!.id, String(req.params.id))); }
+  catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : "Não foi possível abrir a conversa." }); }
 });
 apiRouter.patch("/conversations/:id/routing", async (req, res) => {
   const parsed = z.object({ teamId: z.string().uuid().nullable().optional(), priority: z.enum(["low", "normal", "high", "urgent"]).optional() }).safeParse(req.body);
