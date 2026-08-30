@@ -20,6 +20,10 @@ function windowOpen(item) { return item?.serviceWindowExpiresAt && new Date(item
 function messageContent(item) {
   const url = `/api/messages/${encodeURIComponent(item.id)}/media`;
   const content = typeof item.content === 'string' ? JSON.parse(item.content || '{}') : (item.content || {});
+  if (item.type === 'template') {
+    const buttons = Array.isArray(content.buttons) ? content.buttons : [];
+    return `<p>${escapeHtml(item.textBody || `Template: ${content.template || 'mensagem'}`).replaceAll('\n', '<br>')}</p>${buttons.length ? `<div class="message-template-buttons">${buttons.map(button => button.url ? `<a href="${escapeHtml(button.url)}" target="_blank" rel="noopener">${escapeHtml(button.text || 'Abrir')}</a>` : `<span>${escapeHtml(button.text || 'Ação')}</span>`).join('')}</div>` : ''}`;
+  }
   if (item.type === 'image' || item.type === 'sticker') return `<a href="${url}" target="_blank" class="media-preview"><img src="${url}" alt="${escapeHtml(item.textBody || 'Imagem')}"></a>${item.textBody ? `<p>${escapeHtml(item.textBody)}</p>` : ''}`;
   if (item.type === 'video') return `<video class="media-preview" src="${url}" controls preload="metadata"></video>${item.textBody ? `<p>${escapeHtml(item.textBody)}</p>` : ''}`;
   if (item.type === 'audio') return `<audio class="audio-preview" src="${url}" controls preload="metadata"></audio>`;
@@ -28,6 +32,7 @@ function messageContent(item) {
   if (item.type === 'contacts' && Array.isArray(content.contacts)) return content.contacts.map(contact => `<div class="document-preview"><span>◉</span><div><strong>${escapeHtml(contact.name?.formatted_name || 'Contato')}</strong><small>Contato compartilhado</small></div></div>`).join('');
   return `<p>${escapeHtml(item.textBody || `[${item.type}]`)}</p>`;
 }
+function messageOrigin(item) { const content = typeof item.content === 'string' ? JSON.parse(item.content || '{}') : (item.content || {}); if (content.origin !== 'integration') return ''; const source = content.source === 'site' ? 'Site' : content.source; return `<div class="message-origin"><span>◆</span>${escapeHtml(source || 'Integração')}${content.externalId ? ` · ${escapeHtml(content.externalId)}` : ''}</div>`; }
 function replyContent(item) { if (!item.replyToMessageId && !item.replyToMetaMessageId) return ''; return `<div class="quoted-message"><strong>${escapeHtml(item.replySenderName || (item.replyDirection === 'outbound' ? 'Atendimento' : displayName(state.active)))}</strong><span>${escapeHtml(item.replyTextBody || `[${item.replyType || 'mensagem'}]`)}</span></div>`; }
 function reactionContent(item) { return item.reactions?.length ? `<div class="message-reactions">${item.reactions.map(reaction => `<button type="button" data-existing-reaction="${item.id}" title="${reaction.direction === 'outbound' ? 'Atendimento' : 'Cliente'}">${escapeHtml(reaction.emoji)}</button>`).join('')}</div>` : ''; }
 
@@ -131,8 +136,8 @@ function renderMessages() {
     const grouped = currentDay === previousDay && item.direction === previousDirection;
     previousDay = currentDay; previousDirection = item.direction;
     return `${separator}<div class="message-row ${item.direction} ${grouped ? 'same-author' : 'new-author'}" data-message-id="${item.id}"><article class="bubble">
-      ${replyContent(item)}${item.senderName ? `<small>${escapeHtml(item.senderName)}</small>` : ''}${messageContent(item)}
-      <footer>${item.status === 'failed' && item.direction === 'outbound' ? `<button type="button" class="message-retry" data-retry-id="${item.id}" title="${escapeHtml(item.errorMessage || 'Falha no envio')}">Reenviar</button>` : ''}<time>${time(item.createdAt)}</time>${item.direction === 'outbound' ? `<span class="message-status ${item.status}" title="${escapeHtml(item.errorMessage || statusLabel(item.status))}">${statusIcon(item.status)}</span>` : ''}</footer>
+      ${replyContent(item)}${messageOrigin(item)}${item.senderName ? `<small>${escapeHtml(item.senderName)}</small>` : ''}${messageContent(item)}
+      <footer>${item.status === 'failed' && item.direction === 'outbound' ? `<button type="button" class="message-retry" data-retry-id="${item.id}" title="${escapeHtml(item.errorMessage || 'Falha no envio')}">Reenviar</button>` : ''}<time>${time(item.createdAt)}</time>${item.direction === 'outbound' ? `<span class="message-status ${item.status}" title="${escapeHtml(item.errorMessage || statusLabel(item))}">${statusIcon(item.status)}</span>` : ''}</footer>
       ${reactionContent(item)}</article><button type="button" class="message-more" data-open-actions="${item.id}" aria-label="Ações da mensagem">⌄</button></div>`;
   }).join('') : '<div class="empty">Ainda não há mensagens.</div>';
   $('#message-list').scrollTop = $('#message-list').scrollHeight;
@@ -140,7 +145,7 @@ function renderMessages() {
 }
 
 function statusIcon(status) { return status === 'queued' ? '◷' : status === 'read' ? '✓✓' : status === 'delivered' ? '✓✓' : status === 'failed' ? '!' : '✓'; }
-function statusLabel(status) { return ({ queued: 'Enviando…', sent: 'Enviada', delivered: 'Entregue', read: 'Lida', failed: 'Falha no envio' })[status] || status; }
+function statusLabel(item) { if (item.status === 'queued') { const content = typeof item.content === 'string' ? JSON.parse(item.content || '{}') : (item.content || {}); if (content.scheduledFor && new Date(content.scheduledFor) > new Date()) return `Agendada para ${dateTime(content.scheduledFor)}`; } return ({ queued: 'Enviando…', sent: 'Enviada', delivered: 'Entregue', read: 'Lida', failed: 'Falha no envio' })[item.status] || item.status; }
 function toast(message) { $('#toast').textContent = message; $('#toast').classList.remove('hidden'); setTimeout(() => $('#toast').classList.add('hidden'), 3500); }
 
 function renderSoundPreference() {

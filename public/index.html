@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#090a11">
-  <title>Central de atendimento</title><link rel="stylesheet" href="/css/app.css?v=28">
+  <title>Central de atendimento</title><link rel="stylesheet" href="/css/app.css?v=29">
 </head>
 <body>
   <div class="app-shell">
@@ -84,5 +84,5 @@
   <dialog id="contact-dialog" class="modal"><form id="contact-form"><div class="modal-head"><div><p class="eyebrow">CONTATO</p><h2>Editar contato</h2></div><button type="button" data-close="contact-dialog">×</button></div><label>Nome<input id="contact-name" maxlength="160" required></label><div class="modal-actions"><button type="button" class="ghost" data-close="contact-dialog">Cancelar</button><button class="primary" type="submit">Salvar</button></div></form></dialog>
   <dialog id="conversation-open-dialog" class="modal conversation-open-modal"><div class="conversation-open-content"><div class="modal-head"><div><p class="eyebrow">INICIAR ATENDIMENTO</p><h2>Abrir conversa</h2></div><button type="button" data-close="conversation-open-dialog">×</button></div><div class="conversation-open-icon"><svg viewBox="0 0 24 24"><path d="M20 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h9a4 4 0 0 1 4 4zM9 11h6M12 8v6"/></svg></div><h3 id="conversation-open-name"></h3><p id="conversation-open-message" class="modal-description"></p><div class="status-transition"><span>Nova/Concluída</span><b>→</b><strong>Em atendimento</strong></div><p id="conversation-open-error" class="form-error"></p><div class="modal-actions"><button type="button" class="ghost" data-close="conversation-open-dialog">Cancelar</button><button id="confirm-conversation-open" class="primary" type="button">Abrir atendimento</button></div></div></dialog>
   <dialog id="conversation-busy-dialog" class="modal conversation-open-modal conversation-busy-modal"><div class="conversation-open-content"><div class="modal-head"><div><p class="eyebrow">ATENDIMENTO EM ANDAMENTO</p><h2>Conversa indisponível</h2></div><button type="button" data-close="conversation-busy-dialog">×</button></div><div class="conversation-open-icon busy"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0M18 8h4M20 6v4"/></svg></div><h3>Outro atendente já assumiu</h3><p class="modal-description">Esta conversa já está em andamento com o atendente <strong id="conversation-busy-agent"></strong>. Aguarde a conclusão ou solicite a transferência ao responsável.</p><div class="modal-actions"><button type="button" class="primary" data-close="conversation-busy-dialog">Entendi</button></div></div></dialog>
-  <div id="toast" class="toast hidden"></div><script type="module" src="/vendor/emoji-picker/index.js"></script><script type="module" src="/js/app.js?v=26"></script>
+  <div id="toast" class="toast hidden"></div><script type="module" src="/vendor/emoji-picker/index.js"></script><script type="module" src="/js/app.js?v=27"></script>
 </body></html>

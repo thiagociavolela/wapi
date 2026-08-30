@@ -27,7 +27,8 @@ const schema = z.object({
   META_WABA_ID: z.string().default(""),
   META_ACCESS_TOKEN: z.string().default(""),
   META_APP_SECRET: z.string().default(""),
-  META_WEBHOOK_VERIFY_TOKEN: z.string().default("")
+  META_WEBHOOK_VERIFY_TOKEN: z.string().default(""),
+  INTEGRATION_API_KEY: z.string().default("")
 });
 
 export const config = schema.parse(process.env);

@@ -8,8 +8,10 @@ import { migrate } from "./database/migrate.js";
 import { pool } from "./database/pool.js";
 import { ensureInitialAdmin } from "./modules/auth/auth.js";
 import { startScheduledMessageWorker } from "./modules/conversations/scheduled.js";
+import { startIntegrationMessageWorker } from "./modules/integrations/service.js";
 import { apiRouter } from "./routes/api.js";
 import { authRouter } from "./routes/auth.js";
+import { integrationRouter } from "./routes/integrations.js";
 import { webhookRouter } from "./routes/webhooks.js";
 
 const app = express();
@@ -21,6 +23,7 @@ app.use(express.json({ limit: "2mb", verify: (req, _res, buffer) => { (req as ex
 app.use(cookieParser());
 app.use("/webhooks", webhookRouter);
 app.use("/api/auth", authRouter);
+app.use("/api/integrations", integrationRouter);
 app.use("/api", apiRouter);
 app.use("/vendor/emoji-picker", express.static(path.resolve(root, "../node_modules/emoji-picker-element"), { fallthrough: false }));
 app.use("/vendor/emoji-data", express.static(path.resolve(root, "../node_modules/emoji-picker-element-data"), { fallthrough: false }));
@@ -35,6 +38,7 @@ async function start() {
   await migrate();
   await ensureInitialAdmin();
   startScheduledMessageWorker();
+  startIntegrationMessageWorker();
   app.listen(config.PORT, () => console.log(`Central disponível em ${config.APP_URL}`));
 }
 

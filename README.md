@@ -27,6 +27,7 @@ Projeto independente em Node.js, TypeScript, HTML, CSS e JavaScript para atendim
 - Download de mídias protegido pela sessão do atendente.
 - Sincronização dos templates aprovados diretamente da WABA.
 - Envio de templates com variáveis de texto em cabeçalho e corpo, inclusive fora da janela de 24 horas.
+- Gateway transacional autenticado para o site, com idempotência, agendamento e histórico unificado.
 - Docker Compose para MySQL local.
 
 ## Requisitos
@@ -71,6 +72,10 @@ https://seu-dominio.com/webhooks/meta
 Use como token de verificação o mesmo valor de `META_WEBHOOK_VERIFY_TOKEN` e assine o campo `messages` da conta do WhatsApp Business.
 
 Não coloque tokens no frontend e não versiona o arquivo `.env`.
+
+## Integrar o site
+
+Configure `INTEGRATION_API_KEY` e consulte [a documentação da API transacional](docs/INTEGRATION_API.md). O site deve chamar a central pelo backend; a chave de integração nunca deve ser enviada ao navegador.
 
 ## Comandos
 
