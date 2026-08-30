@@ -2,7 +2,7 @@ import { api } from './api.js';
 
 const $ = (selector) => document.querySelector(selector);
 const SYSTEM_TIME_ZONE = 'America/Sao_Paulo';
-const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], pastedFiles: [], pastedFileIndex: 0, pasteObjectUrls: [], active: null, status: 'new', searchTimer: null, replyTo: null, actionMessage: null, contextConversation: null, assignmentConversationId: null, scheduleConversationId: null, emojiMode: 'insert', recorder: null, typingTimer: null, pendingOpenConversationId: null };
+const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], pastedFiles: [], pastedFileIndex: 0, pasteObjectUrls: [], active: null, status: 'new', searchTimer: null, replyTo: null, actionMessage: null, contextConversation: null, assignmentConversationId: null, scheduleConversationId: null, emojiMode: 'insert', recorder: null, typingTimer: null, pendingOpenConversationId: null, soundEnabled: localStorage.getItem('chat.notificationSound') !== 'off', audioContext: null };
 
 function escapeHtml(value = '') { const node = document.createElement('div'); node.textContent = String(value); return node.innerHTML; }
 function initials(name = '?') { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase(); }
@@ -32,6 +32,7 @@ function replyContent(item) { if (!item.replyToMessageId && !item.replyToMetaMes
 function reactionContent(item) { return item.reactions?.length ? `<div class="message-reactions">${item.reactions.map(reaction => `<button type="button" data-existing-reaction="${item.id}" title="${reaction.direction === 'outbound' ? 'Atendimento' : 'Cliente'}">${escapeHtml(reaction.emoji)}</button>`).join('')}</div>` : ''; }
 
 async function init() {
+  renderSoundPreference();
   state.user = (await api('/api/auth/me')).user;
   const [users, teams, quickReplies] = await Promise.all([api('/api/users'), api('/api/management/teams'), api('/api/quick-replies')]);
   state.users = users.items; state.teams = teams.items; state.quickReplies = quickReplies.items;
@@ -141,6 +142,24 @@ function renderMessages() {
 function statusIcon(status) { return status === 'queued' ? '◷' : status === 'read' ? '✓✓' : status === 'delivered' ? '✓✓' : status === 'failed' ? '!' : '✓'; }
 function statusLabel(status) { return ({ queued: 'Enviando…', sent: 'Enviada', delivered: 'Entregue', read: 'Lida', failed: 'Falha no envio' })[status] || status; }
 function toast(message) { $('#toast').textContent = message; $('#toast').classList.remove('hidden'); setTimeout(() => $('#toast').classList.add('hidden'), 3500); }
+
+function renderSoundPreference() {
+  const button = $('#sound-toggle'); if (!button) return;
+  button.classList.toggle('sound-muted', !state.soundEnabled); button.setAttribute('aria-pressed', String(state.soundEnabled));
+  const action = state.soundEnabled ? 'Desativar' : 'Ativar'; button.title = `${action} som de novas mensagens`; button.setAttribute('aria-label', `${action} som de novas mensagens`);
+}
+async function unlockNotificationAudio() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext; if (!AudioContextClass) return null;
+  state.audioContext ||= new AudioContextClass(); if (state.audioContext.state === 'suspended') await state.audioContext.resume().catch(() => {}); return state.audioContext;
+}
+async function playNotificationSound(preview = false) {
+  if (!state.soundEnabled && !preview) return; const context = await unlockNotificationAudio(); if (!context || context.state !== 'running') return;
+  const start = context.currentTime; const master = context.createGain(); master.gain.setValueAtTime(0.0001, start); master.gain.exponentialRampToValueAtTime(.2, start + .015); master.gain.exponentialRampToValueAtTime(.0001, start + .48); master.connect(context.destination);
+  [[659.25, 0], [783.99, .09], [987.77, .19]].forEach(([frequency, delay]) => { const oscillator = context.createOscillator(); const gain = context.createGain(); oscillator.type = 'sine'; oscillator.frequency.setValueAtTime(frequency, start + delay); gain.gain.setValueAtTime(.0001, start + delay); gain.gain.exponentialRampToValueAtTime(.42, start + delay + .012); gain.gain.exponentialRampToValueAtTime(.0001, start + delay + .2); oscillator.connect(gain); gain.connect(master); oscillator.start(start + delay); oscillator.stop(start + delay + .22); });
+  const button = $('#sound-toggle'); button?.classList.add('ringing'); setTimeout(() => button?.classList.remove('ringing'), 650);
+}
+$('#sound-toggle').addEventListener('click', async () => { state.soundEnabled = !state.soundEnabled; localStorage.setItem('chat.notificationSound', state.soundEnabled ? 'on' : 'off'); renderSoundPreference(); if (state.soundEnabled) { await playNotificationSound(true); toast('Som de novas mensagens ativado.'); } else toast('Som de novas mensagens desativado.'); });
+document.addEventListener('pointerdown', () => { if (state.soundEnabled) void unlockNotificationAudio(); }, { once: true });
 
 function renderAgentOptions() {
   $('#agent-select').innerHTML = `<option value="">Não atribuído</option>${state.users.map(user => `<option value="${user.id}">${escapeHtml(user.name)} · ${escapeHtml(user.role)}</option>`).join('')}`;
@@ -476,6 +495,7 @@ function connectEvents() {
   const source = new EventSource('/api/events');
   source.onmessage = async event => {
     const data = JSON.parse(event.data); if (data.type === 'ready') return;
+    if (data.type === 'message' && data.direction === 'inbound') void playNotificationSound();
     await loadConversations();
     if (state.active && (!data.conversationId || data.conversationId === state.active.id)) {
       await loadMessages();

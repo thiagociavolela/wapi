@@ -103,7 +103,7 @@ async function processInbound(organizationId: string, message: Json, profileName
       [(text || `[${message.type ?? "mensagem"}]`).slice(0, 500), Number(message.timestamp) || Math.floor(Date.now() / 1000), conversationId]);
     await markEventProcessed(connection, `message:${message.id}`);
     await connection.commit();
-    publish(organizationId, { type: "message", conversationId });
+    publish(organizationId, { type: "message", direction: "inbound", conversationId });
   } catch (error) {
     await connection.rollback();
     throw error;
