@@ -128,3 +128,48 @@ export async function updateSlaPolicy(organizationId: string, firstResponseMinut
     ON DUPLICATE KEY UPDATE first_response_minutes = VALUES(first_response_minutes), resolution_minutes = VALUES(resolution_minutes)`,
     [organizationId, firstResponseMinutes, resolutionMinutes]);
 }
+
+export async function getIntegrationDashboard(organizationId: string, filters: { search?: string; status?: string; template?: string; from?: string; to?: string; page: number; limit: number }) {
+  const [summaryResult, templatesResult, dailyResult, upcomingResult] = await Promise.all([
+    pool.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total, SUM(j.created_at >= CURDATE()) AS createdToday,
+      SUM(j.status = 'pending') AS pending, SUM(j.status = 'processing') AS processing, SUM(j.status = 'sent') AS sent,
+      SUM(j.status = 'failed') AS failed, SUM(j.status = 'cancelled') AS cancelled,
+      SUM(j.status = 'pending' AND j.scheduled_for > NOW(3)) AS scheduled,
+      SUM(j.status = 'pending' AND j.scheduled_for BETWEEN NOW(3) AND DATE_ADD(NOW(3), INTERVAL 24 HOUR)) AS next24Hours,
+      SUM(m.status IN ('delivered','read')) AS delivered, SUM(m.status = 'read') AS messageRead,
+      ROUND(AVG(CASE WHEN j.status = 'sent' THEN TIMESTAMPDIFF(SECOND, j.created_at, j.processed_at) END)) AS averageProcessingSeconds
+      FROM integration_message_jobs j JOIN messages m ON m.id = j.message_id WHERE j.organization_id = ?`, [organizationId]),
+    pool.execute<RowDataPacket[]>(`SELECT j.template_name AS template, COUNT(*) AS total, SUM(j.status = 'sent') AS sent,
+      SUM(j.status = 'failed') AS failed, SUM(j.status = 'pending') AS pending, MAX(j.created_at) AS lastCreatedAt
+      FROM integration_message_jobs j WHERE j.organization_id = ? GROUP BY j.template_name ORDER BY total DESC, j.template_name`, [organizationId]),
+    pool.execute<RowDataPacket[]>(`SELECT DATE_FORMAT(j.created_at, '%Y-%m-%d') AS day, COUNT(*) AS created,
+      SUM(j.status = 'sent') AS sent, SUM(j.status = 'failed') AS failed FROM integration_message_jobs j
+      WHERE j.organization_id = ? AND j.created_at >= DATE_SUB(CURDATE(), INTERVAL 13 DAY)
+      GROUP BY DATE_FORMAT(j.created_at, '%Y-%m-%d') ORDER BY day`, [organizationId]),
+    pool.execute<RowDataPacket[]>(`SELECT j.id, j.conversation_id AS conversationId, j.template_name AS template, j.scheduled_for AS scheduledFor,
+      COALESCE(ct.name, ct.profile_name, ct.phone) AS contactName, ct.phone FROM integration_message_jobs j
+      JOIN conversations c ON c.id = j.conversation_id JOIN contacts ct ON ct.id = c.contact_id
+      WHERE j.organization_id = ? AND j.status = 'pending' AND j.scheduled_for > NOW(3) ORDER BY j.scheduled_for LIMIT 8`, [organizationId])
+  ]);
+  const summaryRows = summaryResult[0] as RowDataPacket[]; const templates = templatesResult[0] as RowDataPacket[];
+  const daily = dailyResult[0] as RowDataPacket[]; const upcoming = upcomingResult[0] as RowDataPacket[];
+  const conditions = ["j.organization_id = ?"]; const params: any[] = [organizationId];
+  if (filters.search) { conditions.push("(ct.name LIKE ? OR ct.profile_name LIKE ? OR ct.phone LIKE ? OR j.external_id LIKE ? OR m.text_body LIKE ?)"); const term = `%${filters.search}%`; params.push(term, term, term, term, term); }
+  if (filters.status) { conditions.push("j.status = ?"); params.push(filters.status); }
+  if (filters.template) { conditions.push("j.template_name = ?"); params.push(filters.template); }
+  if (filters.from) { conditions.push("j.created_at >= ?"); params.push(`${filters.from} 00:00:00`); }
+  if (filters.to) { conditions.push("j.created_at < DATE_ADD(?, INTERVAL 1 DAY)"); params.push(`${filters.to} 00:00:00`); }
+  const where = conditions.join(" AND ");
+  const [countRows] = await pool.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total FROM integration_message_jobs j JOIN messages m ON m.id = j.message_id
+    JOIN conversations c ON c.id = j.conversation_id JOIN contacts ct ON ct.id = c.contact_id WHERE ${where}`, params);
+  const offset = (filters.page - 1) * filters.limit;
+  const [items] = await pool.execute<RowDataPacket[]>(`SELECT j.id, j.external_id AS externalId, j.template_name AS template, j.language,
+    j.status, j.attempts, j.error_message AS errorMessage, j.scheduled_for AS scheduledFor, j.created_at AS createdAt,
+    j.processed_at AS processedAt, j.metadata, j.conversation_id AS conversationId, m.id AS messageId,
+    m.meta_message_id AS wamid, m.status AS deliveryStatus, m.text_body AS textBody, m.sent_at AS sentAt,
+    m.delivered_at AS deliveredAt, m.read_at AS readAt, COALESCE(ct.name, ct.profile_name, ct.phone) AS contactName, ct.phone
+    FROM integration_message_jobs j JOIN messages m ON m.id = j.message_id JOIN conversations c ON c.id = j.conversation_id
+    JOIN contacts ct ON ct.id = c.contact_id WHERE ${where} ORDER BY j.created_at DESC LIMIT ? OFFSET ?`, [...params, filters.limit, offset]);
+  const total = Number(countRows[0]?.total ?? 0);
+  return { summary: summaryRows[0] ?? {}, templates, daily, upcoming, items, pagination: { page: filters.page, limit: filters.limit, total, pages: Math.max(1, Math.ceil(total / filters.limit)) }, generatedAt: new Date().toISOString() };
+}

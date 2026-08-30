@@ -8,7 +8,7 @@ import { convertVoiceToOgg } from "../modules/conversations/audio.js";
 import { subscribe } from "../modules/realtime/events.js";
 import { isMetaConfigured } from "../config.js";
 import { listMessageTemplates } from "../modules/meta/client.js";
-import { createTeam, createUser, getDashboard, getSlaPolicy, listManagedUsers, listTeams, updateSlaPolicy, updateTeam, updateUser } from "../modules/management/service.js";
+import { createTeam, createUser, getDashboard, getIntegrationDashboard, getSlaPolicy, listManagedUsers, listTeams, updateSlaPolicy, updateTeam, updateUser } from "../modules/management/service.js";
 
 export const apiRouter = Router();
 const mediaUpload = multer({
@@ -144,6 +144,10 @@ apiRouter.put("/conversations/:id/tags", async (req, res) => {
   res.json({ items: await replaceTags(req.auth!.organizationId, req.auth!.id, String(req.params.id), names) });
 });
 apiRouter.get("/management/dashboard", async (req, res) => res.json(await getDashboard(req.auth!.organizationId)));
+apiRouter.get("/management/integrations", async (req, res) => {
+  const parsed = z.object({ search: z.string().max(160).optional().catch(undefined), status: z.enum(["pending", "processing", "sent", "failed", "cancelled"]).optional().catch(undefined), template: z.string().max(512).optional().catch(undefined), from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().catch(undefined), to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().catch(undefined), page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(10).max(100).default(30) }).parse(req.query);
+  res.json(await getIntegrationDashboard(req.auth!.organizationId, parsed));
+});
 apiRouter.get("/management/users", requireManager, async (req, res) => res.json({ items: await listManagedUsers(req.auth!.organizationId) }));
 apiRouter.post("/management/users", requireManager, async (req, res) => {
   const parsed = z.object({ name: z.string().trim().min(2).max(160), email: z.string().email(), password: z.string().min(10).max(200), role: z.enum(["admin", "supervisor", "agent"]) }).safeParse(req.body);
