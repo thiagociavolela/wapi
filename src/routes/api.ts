@@ -155,7 +155,7 @@ apiRouter.post("/management/users", requireManager, async (req, res) => {
   res.status(201).json(await createUser(req.auth!.organizationId, parsed.data));
 });
 apiRouter.patch("/management/users/:id", requireManager, async (req, res) => {
-  const parsed = z.object({ name: z.string().trim().min(2).max(160).optional(), password: z.string().min(10).max(200).optional(), role: z.enum(["admin", "supervisor", "agent"]).optional(), active: z.boolean().optional() }).safeParse(req.body);
+  const parsed = z.object({ name: z.string().trim().min(2).max(160).optional(), email: z.string().trim().email().max(255).optional(), password: z.string().min(10).max(200).optional(), role: z.enum(["admin", "supervisor", "agent"]).optional(), active: z.boolean().optional() }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Dados do usuário inválidos." });
   if (String(req.params.id) === req.auth!.id && parsed.data.active === false) return res.status(400).json({ error: "Você não pode desativar seu próprio usuário." });
   res.json({ ok: await updateUser(req.auth!.organizationId, String(req.params.id), parsed.data) });

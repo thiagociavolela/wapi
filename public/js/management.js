@@ -1,19 +1,26 @@
 import { api } from './api.js';
 const $ = selector => document.querySelector(selector);
 const SYSTEM_TIME_ZONE = 'America/Sao_Paulo';
-const state = { me: null, users: [], teams: [] };
+const state = { me: null, users: [], teams: [], viewedUser: null };
 const escapeHtml = value => { const node = document.createElement('div'); node.textContent = String(value ?? ''); return node.innerHTML; };
 const formatSeconds = seconds => !seconds ? 'Sem dados' : seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)} min`;
 const number = value => Number(value || 0);
 const shortTime = value => value ? new Intl.DateTimeFormat('pt-BR', { timeZone: SYSTEM_TIME_ZONE, hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : '—';
+const fullDate = value => value ? new Intl.DateTimeFormat('pt-BR', { timeZone: SYSTEM_TIME_ZONE, dateStyle: 'long', timeStyle: 'short' }).format(new Date(value)) : '—';
+const roleLabel = role => ({ admin: 'Administrador', supervisor: 'Supervisor', agent: 'Atendente' })[role] || role;
+const initials = name => String(name || '?').trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase();
 function toast(message) { $('#toast').textContent = message; $('#toast').classList.remove('hidden'); setTimeout(() => $('#toast').classList.add('hidden'), 3000); }
 function openDialog(id) { $(`#${id}`).showModal(); } function closeDialog(id) { $(`#${id}`).close(); }
 
 async function init() {
-  state.me = (await api('/api/auth/me')).user; $('#manager-profile').textContent = `${state.me.name} · ${state.me.role}`;
+  state.me = (await api('/api/auth/me')).user; renderOwnProfile();
   await Promise.all([loadDashboard(), loadTeams(), loadSla()]);
   if (state.me.role !== 'agent') await loadUsers();
   else { $('#new-user').classList.add('hidden'); $('#new-team').classList.add('hidden'); }
+}
+
+function renderOwnProfile() {
+  $('#manager-profile').textContent = `${state.me.name} · ${roleLabel(state.me.role)}`; $('#profile-avatar').textContent = initials(state.me.name); $('#profile-display-name').textContent = state.me.name; $('#profile-display-email').textContent = state.me.email; $('#profile-role').textContent = roleLabel(state.me.role); $('#profile-name').value = state.me.name; $('#profile-email').value = state.me.email;
 }
 
 async function loadDashboard() {
@@ -63,8 +70,19 @@ function renderAttention(items) {
 
 async function loadUsers() {
   const data = await api('/api/management/users'); state.users = data.items;
-  $('#users-table').innerHTML = state.users.map(user => `<tr><td><strong>${escapeHtml(user.name)}</strong><small>${escapeHtml(user.email)}</small></td><td><span class="role-badge">${escapeHtml(user.role)}</span></td><td>${escapeHtml((user.teamNames || '').split('||').filter(Boolean).join(', ') || '—')}</td><td><span class="active-badge ${user.active ? '' : 'inactive'}">${user.active ? 'Ativo' : 'Inativo'}</span></td><td><button class="row-action" data-toggle-user="${user.id}" data-active="${user.active ? '1' : '0'}">${user.active ? 'Desativar' : 'Ativar'}</button></td></tr>`).join('');
+  $('#users-table').innerHTML = state.users.map(user => `<tr><td><strong>${escapeHtml(user.name)}</strong><small>${escapeHtml(user.email)}</small></td><td><span class="role-badge">${escapeHtml(roleLabel(user.role))}</span></td><td>${escapeHtml((user.teamNames || '').split('||').filter(Boolean).join(', ') || '—')}</td><td><span class="active-badge ${user.active ? '' : 'inactive'}">${user.active ? 'Ativo' : 'Inativo'}</span></td><td><div class="user-row-actions"><button class="row-action" data-view-user="${user.id}">Ver perfil</button><button class="row-action accent" data-edit-user="${user.id}">Editar</button></div></td></tr>`).join('');
   renderMemberOptions();
+}
+
+function prepareUserDialog(user = null) {
+  $('#user-form').reset(); $('#user-id').value = user?.id || ''; $('#user-dialog-title').textContent = user ? 'Editar usuário' : 'Novo usuário'; $('#save-user').textContent = user ? 'Salvar alterações' : 'Criar usuário'; $('#user-password-label').textContent = user ? 'Redefinir senha' : 'Senha inicial'; $('#user-password-help').textContent = user ? 'Deixe em branco para manter a senha atual.' : 'Mínimo de 10 caracteres.'; $('#user-password').required = !user; $('#user-active-row').classList.toggle('hidden', !user);
+  if (user) { $('#user-name').value = user.name; $('#user-email').value = user.email; $('#user-role').value = user.role; $('#user-active').checked = Boolean(user.active); $('#user-active').disabled = user.id === state.me.id; }
+  else { $('#user-active').disabled = false; $('#user-role').value = 'agent'; }
+  openDialog('user-dialog');
+}
+
+function viewUser(user) {
+  state.viewedUser = user; $('#view-user-avatar').textContent = initials(user.name); $('#view-user-name').textContent = user.name; $('#view-user-email').textContent = user.email; $('#view-user-role').textContent = roleLabel(user.role); $('#view-user-status').innerHTML = `<span class="active-badge ${user.active ? '' : 'inactive'}">${user.active ? 'Ativo' : 'Inativo'}</span>`; $('#view-user-teams').textContent = (user.teamNames || '').split('||').filter(Boolean).join(', ') || 'Sem equipe'; $('#view-user-created').textContent = fullDate(user.createdAt); openDialog('user-profile-dialog');
 }
 
 async function loadTeams() {
@@ -82,9 +100,11 @@ function activateManagementTab(tab) {
 document.querySelectorAll('.management-tab').forEach(button => button.addEventListener('click', () => { activateManagementTab(button.dataset.tab); history.replaceState(null, '', `#${button.dataset.tab}`); }));
 activateManagementTab(location.hash.slice(1));
 document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => closeDialog(button.dataset.close)));
-$('#new-user').addEventListener('click', () => openDialog('user-dialog')); $('#new-team').addEventListener('click', () => { renderMemberOptions(); openDialog('team-dialog'); });
-$('#user-form').addEventListener('submit', async event => { event.preventDefault(); try { await api('/api/management/users', { method: 'POST', body: JSON.stringify({ name: $('#user-name').value, email: $('#user-email').value, password: $('#user-password').value, role: $('#user-role').value }) }); event.target.reset(); closeDialog('user-dialog'); await loadUsers(); toast('Usuário criado.'); } catch (error) { toast(error.message); } });
-$('#users-table').addEventListener('click', async event => { const button = event.target.closest('[data-toggle-user]'); if (!button) return; try { await api(`/api/management/users/${button.dataset.toggleUser}`, { method: 'PATCH', body: JSON.stringify({ active: button.dataset.active !== '1' }) }); await loadUsers(); toast('Usuário atualizado.'); } catch (error) { toast(error.message); } });
+$('#new-user').addEventListener('click', () => prepareUserDialog()); $('#new-team').addEventListener('click', () => { renderMemberOptions(); openDialog('team-dialog'); });
+$('#profile-form').addEventListener('submit', async event => { event.preventDefault(); const newPassword = $('#profile-new-password').value; if (newPassword !== $('#profile-confirm-password').value) return toast('A confirmação da nova senha não confere.'); if (newPassword && !$('#profile-current-password').value) return toast('Informe sua senha atual para criar uma nova senha.'); const body = { name: $('#profile-name').value, email: $('#profile-email').value }; if (newPassword) { body.currentPassword = $('#profile-current-password').value; body.newPassword = newPassword; } try { state.me = (await api('/api/auth/me', { method: 'PATCH', body: JSON.stringify(body) })).user; $('#profile-form').reset(); renderOwnProfile(); toast('Perfil atualizado com sucesso.'); } catch (error) { toast(error.message); } });
+$('#user-form').addEventListener('submit', async event => { event.preventDefault(); const id = $('#user-id').value; const body = { name: $('#user-name').value, email: $('#user-email').value, role: $('#user-role').value }; if ($('#user-password').value) body.password = $('#user-password').value; if (id) body.active = $('#user-active').checked; try { await api(id ? `/api/management/users/${id}` : '/api/management/users', { method: id ? 'PATCH' : 'POST', body: JSON.stringify(body) }); event.target.reset(); closeDialog('user-dialog'); await loadUsers(); toast(id ? 'Usuário atualizado.' : 'Usuário criado.'); } catch (error) { toast(error.message); } });
+$('#users-table').addEventListener('click', event => { const viewButton = event.target.closest('[data-view-user]'); const editButton = event.target.closest('[data-edit-user]'); const id = viewButton?.dataset.viewUser || editButton?.dataset.editUser; if (!id) return; const user = state.users.find(item => item.id === id); if (!user) return; if (viewButton) viewUser(user); else prepareUserDialog(user); });
+$('#edit-viewed-user').addEventListener('click', () => { if (!state.viewedUser) return; closeDialog('user-profile-dialog'); prepareUserDialog(state.viewedUser); });
 $('#team-form').addEventListener('submit', async event => { event.preventDefault(); const memberIds = [...document.querySelectorAll('#team-members input:checked')].map(input => input.value); try { await api('/api/management/teams', { method: 'POST', body: JSON.stringify({ name: $('#team-name').value, color: $('#team-color').value, memberIds }) }); event.target.reset(); $('#team-color').value = '#6657e8'; closeDialog('team-dialog'); await Promise.all([loadTeams(), loadDashboard()]); toast('Equipe criada.'); } catch (error) { toast(error.message); } });
 $('#sla-form').addEventListener('submit', async event => { event.preventDefault(); try { await api('/api/management/sla', { method: 'PUT', body: JSON.stringify({ firstResponseMinutes: Number($('#sla-first').value), resolutionMinutes: Number($('#sla-resolution').value) }) }); toast('Política de SLA atualizada.'); } catch (error) { toast(error.message); } });
 $('#refresh-dashboard').addEventListener('click', async event => { event.currentTarget.disabled = true; try { await loadDashboard(); toast('Indicadores atualizados.'); } catch (error) { toast(error.message); } finally { event.currentTarget.disabled = false; } });

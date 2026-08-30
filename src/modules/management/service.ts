@@ -74,9 +74,10 @@ export async function createUser(organizationId: string, input: { name: string; 
   return { id };
 }
 
-export async function updateUser(organizationId: string, id: string, input: { name?: string; role?: string; active?: boolean; password?: string }) {
+export async function updateUser(organizationId: string, id: string, input: { name?: string; email?: string; role?: string; active?: boolean; password?: string }) {
   const fields: string[] = []; const values: unknown[] = [];
   if (input.name !== undefined) { fields.push("name = ?"); values.push(input.name); }
+  if (input.email !== undefined) { fields.push("email = ?"); values.push(input.email.toLowerCase()); }
   if (input.role !== undefined) { fields.push("role = ?"); values.push(input.role); }
   if (input.active !== undefined) { fields.push("active = ?"); values.push(input.active); }
   if (input.password) { fields.push("password_hash = ?"); values.push(await argon2.hash(input.password, { type: argon2.argon2id })); }

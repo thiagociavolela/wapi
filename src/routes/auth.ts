@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { authenticate, clearSession, issueSession, requireAuth } from "../modules/auth/auth.js";
+import { authenticate, clearSession, issueSession, requireAuth, updateOwnProfile } from "../modules/auth/auth.js";
 
 export const authRouter = Router();
 const loginSchema = z.object({ email: z.string().email(), password: z.string().min(1).max(200) });
@@ -15,3 +15,9 @@ authRouter.post("/login", async (req, res) => {
 });
 authRouter.post("/logout", (_req, res) => { clearSession(res); res.status(204).end(); });
 authRouter.get("/me", requireAuth, (req, res) => res.json({ user: req.auth }));
+authRouter.patch("/me", requireAuth, async (req, res) => {
+  const parsed = z.object({ name: z.string().trim().min(2).max(160), email: z.string().trim().email().max(255), currentPassword: z.string().max(200).optional(), newPassword: z.string().min(10).max(200).optional() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Dados do perfil inválidos." });
+  try { const user = await updateOwnProfile(req.auth!, parsed.data); issueSession(res, user); res.json({ user }); }
+  catch (error) { const raw = error instanceof Error ? error.message : ""; const message = raw.includes("Senha atual") ? raw : raw.includes("Duplicate entry") ? "Este e-mail já está sendo utilizado." : "Não foi possível atualizar o perfil."; res.status(raw.includes("Senha atual") ? 400 : 409).json({ error: message }); }
+});

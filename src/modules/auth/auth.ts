@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import argon2 from "argon2";
 import jwt from "jsonwebtoken";
 import type { NextFunction, Request, Response } from "express";
-import type { RowDataPacket } from "mysql2";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { config } from "../../config.js";
 import { pool } from "../../database/pool.js";
 
@@ -56,6 +56,21 @@ export async function authenticate(email: string, password: string): Promise<Aut
   const row = rows[0];
   if (!row || !(await argon2.verify(row.password_hash, password))) return null;
   return mapUser(row);
+}
+
+export async function updateOwnProfile(user: AuthUser, input: { name: string; email: string; currentPassword?: string; newPassword?: string }): Promise<AuthUser> {
+  const [rows] = await pool.execute<UserRow[]>(
+    "SELECT id, organization_id, name, email, password_hash, role FROM users WHERE id = ? AND organization_id = ? AND active = TRUE LIMIT 1",
+    [user.id, user.organizationId]
+  );
+  const row = rows[0]; if (!row) throw new Error("Usuário não encontrado.");
+  if (input.newPassword && (!input.currentPassword || !(await argon2.verify(row.password_hash, input.currentPassword)))) throw new Error("Senha atual incorreta.");
+  const fields = ["name = ?", "email = ?"]; const values: unknown[] = [input.name, input.email.toLowerCase()];
+  if (input.newPassword) { fields.push("password_hash = ?"); values.push(await argon2.hash(input.newPassword, { type: argon2.argon2id })); }
+  values.push(user.id, user.organizationId);
+  const [result] = await pool.execute<ResultSetHeader>(`UPDATE users SET ${fields.join(", ")} WHERE id = ? AND organization_id = ?`, values as any[]);
+  if (!result.affectedRows) throw new Error("Não foi possível atualizar o perfil.");
+  return { ...user, name: input.name, email: input.email.toLowerCase() };
 }
 
 export function issueSession(res: Response, user: AuthUser) {
