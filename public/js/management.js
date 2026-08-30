@@ -75,7 +75,12 @@ async function loadTeams() {
 async function loadSla() { const data = await api('/api/management/sla'); $('#sla-first').value = data.firstResponseMinutes; $('#sla-resolution').value = data.resolutionMinutes; }
 function renderMemberOptions() { $('#team-members').innerHTML = state.users.filter(user => user.active).map(user => `<label><input type="checkbox" value="${user.id}">${escapeHtml(user.name)}</label>`).join('') || '<span class="detail-empty">Crie usuários primeiro.</span>'; }
 
-document.querySelectorAll('.management-tab').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('.management-tab').forEach(item => item.classList.remove('active')); button.classList.add('active'); document.querySelectorAll('.management-content').forEach(item => item.classList.add('hidden')); $(`#tab-${button.dataset.tab}`).classList.remove('hidden'); $('#page-title').textContent = button.textContent; }));
+function activateManagementTab(tab) {
+  const button = document.querySelector(`.management-tab[data-tab="${tab}"]`) || document.querySelector('.management-tab'); if (!button) return;
+  document.querySelectorAll('.management-tab').forEach(item => item.classList.toggle('active', item === button)); document.querySelectorAll('.management-content').forEach(item => item.classList.add('hidden')); $(`#tab-${button.dataset.tab}`).classList.remove('hidden'); $('#page-title').textContent = button.textContent;
+}
+document.querySelectorAll('.management-tab').forEach(button => button.addEventListener('click', () => { activateManagementTab(button.dataset.tab); history.replaceState(null, '', `#${button.dataset.tab}`); }));
+activateManagementTab(location.hash.slice(1));
 document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => closeDialog(button.dataset.close)));
 $('#new-user').addEventListener('click', () => openDialog('user-dialog')); $('#new-team').addEventListener('click', () => { renderMemberOptions(); openDialog('team-dialog'); });
 $('#user-form').addEventListener('submit', async event => { event.preventDefault(); try { await api('/api/management/users', { method: 'POST', body: JSON.stringify({ name: $('#user-name').value, email: $('#user-email').value, password: $('#user-password').value, role: $('#user-role').value }) }); event.target.reset(); closeDialog('user-dialog'); await loadUsers(); toast('Usuário criado.'); } catch (error) { toast(error.message); } });

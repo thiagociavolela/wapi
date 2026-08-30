@@ -169,6 +169,13 @@ async function playNotificationSound(preview = false) {
 $('#sound-toggle').addEventListener('click', async () => { state.soundEnabled = !state.soundEnabled; localStorage.setItem('chat.notificationSound', state.soundEnabled ? 'on' : 'off'); renderSoundPreference(); if (state.soundEnabled) { await playNotificationSound(true); toast('Som de novas mensagens ativado.'); } else toast('Som de novas mensagens desativado.'); });
 document.addEventListener('pointerdown', () => { if (state.soundEnabled) void unlockNotificationAudio(); }, { once: true });
 
+const settingsToggle = $('#settings-toggle'); const settingsMenu = $('#settings-menu');
+function closeSettingsMenu() { settingsMenu?.classList.add('hidden'); settingsToggle?.setAttribute('aria-expanded', 'false'); }
+settingsToggle?.addEventListener('click', event => { event.stopPropagation(); const opening = settingsMenu.classList.contains('hidden'); settingsMenu.classList.toggle('hidden', !opening); settingsToggle.setAttribute('aria-expanded', String(opening)); });
+settingsMenu?.addEventListener('click', event => event.stopPropagation());
+document.addEventListener('click', closeSettingsMenu);
+document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeSettingsMenu(); settingsToggle?.focus(); } });
+
 function renderAgentOptions() {
   $('#agent-select').innerHTML = `<option value="">Não atribuído</option>${state.users.map(user => `<option value="${user.id}">${escapeHtml(user.name)} · ${escapeHtml(user.role)}</option>`).join('')}`;
 }
