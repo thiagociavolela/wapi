@@ -2,7 +2,7 @@ import { api } from './api.js';
 
 const $ = (selector) => document.querySelector(selector);
 const SYSTEM_TIME_ZONE = 'America/Sao_Paulo';
-const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], pastedFiles: [], pastedFileIndex: 0, pasteObjectUrls: [], active: null, status: 'new', searchTimer: null, replyTo: null, actionMessage: null, contextConversation: null, assignmentConversationId: null, scheduleConversationId: null, emojiMode: 'insert', recorder: null, typingTimer: null, pendingOpenConversationId: null, soundEnabled: localStorage.getItem('chat.notificationSound') !== 'off', audioContext: null };
+const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], pastedFiles: [], pastedFileIndex: 0, pasteObjectUrls: [], active: null, status: 'new', searchTimer: null, replyTo: null, actionMessage: null, contextConversation: null, assignmentConversationId: null, scheduleConversationId: null, emojiMode: 'insert', recorder: null, typingTimer: null, pendingOpenConversationId: null, soundEnabled: localStorage.getItem('chat.notificationSound') !== 'off', notificationAudio: null };
 
 function escapeHtml(value = '') { const node = document.createElement('div'); node.textContent = String(value); return node.innerHTML; }
 function initials(name = '?') { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase(); }
@@ -153,14 +153,17 @@ function renderSoundPreference() {
   button.classList.toggle('sound-muted', !state.soundEnabled); button.setAttribute('aria-pressed', String(state.soundEnabled));
   const action = state.soundEnabled ? 'Desativar' : 'Ativar'; button.title = `${action} som de novas mensagens`; button.setAttribute('aria-label', `${action} som de novas mensagens`);
 }
+function getNotificationAudio() {
+  if (!state.notificationAudio) { state.notificationAudio = new Audio('/notificacao.mp3'); state.notificationAudio.preload = 'auto'; }
+  return state.notificationAudio;
+}
 async function unlockNotificationAudio() {
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext; if (!AudioContextClass) return null;
-  state.audioContext ||= new AudioContextClass(); if (state.audioContext.state === 'suspended') await state.audioContext.resume().catch(() => {}); return state.audioContext;
+  const audio = getNotificationAudio(); const previousVolume = audio.volume; audio.volume = 0;
+  try { await audio.play(); audio.pause(); audio.currentTime = 0; } catch {} finally { audio.volume = previousVolume; }
+  return audio;
 }
 async function playNotificationSound(preview = false) {
-  if (!state.soundEnabled && !preview) return; const context = await unlockNotificationAudio(); if (!context || context.state !== 'running') return;
-  const start = context.currentTime; const master = context.createGain(); master.gain.setValueAtTime(0.0001, start); master.gain.exponentialRampToValueAtTime(.2, start + .015); master.gain.exponentialRampToValueAtTime(.0001, start + .48); master.connect(context.destination);
-  [[659.25, 0], [783.99, .09], [987.77, .19]].forEach(([frequency, delay]) => { const oscillator = context.createOscillator(); const gain = context.createGain(); oscillator.type = 'sine'; oscillator.frequency.setValueAtTime(frequency, start + delay); gain.gain.setValueAtTime(.0001, start + delay); gain.gain.exponentialRampToValueAtTime(.42, start + delay + .012); gain.gain.exponentialRampToValueAtTime(.0001, start + delay + .2); oscillator.connect(gain); gain.connect(master); oscillator.start(start + delay); oscillator.stop(start + delay + .22); });
+  if (!state.soundEnabled && !preview) return; const audio = getNotificationAudio(); audio.currentTime = 0; await audio.play().catch(() => {});
   const button = $('#sound-toggle'); button?.classList.add('ringing'); setTimeout(() => button?.classList.remove('ringing'), 650);
 }
 $('#sound-toggle').addEventListener('click', async () => { state.soundEnabled = !state.soundEnabled; localStorage.setItem('chat.notificationSound', state.soundEnabled ? 'on' : 'off'); renderSoundPreference(); if (state.soundEnabled) { await playNotificationSound(true); toast('Som de novas mensagens ativado.'); } else toast('Som de novas mensagens desativado.'); });
