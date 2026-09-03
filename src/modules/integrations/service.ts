@@ -9,6 +9,10 @@ type TemplateDefinition = { name: string; status: string; language: string; cate
 export type IntegrationMessageInput = { to: string; contactName?: string; template: string; language: string; parameters: string[]; sendAt?: Date; externalId?: string; metadata?: Record<string, unknown> };
 let templateCache: { expiresAt: number; items: TemplateDefinition[] } | null = null;
 
+const templateAliases: Record<string, string> = {
+  pedido_pendente_finalizacao: "pedido_pendente_finalizacao_br"
+};
+
 async function approvedTemplates() {
   if (templateCache && templateCache.expiresAt > Date.now()) return templateCache.items;
   const response = await listMessageTemplates();
@@ -18,26 +22,52 @@ async function approvedTemplates() {
 
 export function buildTemplateSnapshot(template: TemplateDefinition, parameters: string[]) {
   let cursor = 0;
-  if (template.components.some((component) => component.type !== "BODY" && typeof component.text === "string" && /\{\{\d+\}\}/.test(component.text))) throw new Error("Este template usa variáveis fora do corpo e ainda não é compatível com a integração simplificada.");
-  const render = (text = "") => text.replace(/\{\{(\d+)\}\}/g, (_match, index) => parameters[Number(index) - 1] ?? `{{${index}}}`);
-  const variableIndexes = template.components.flatMap((component) => typeof component.text === "string" ? [...component.text.matchAll(/\{\{(\d+)\}\}/g)].map((match) => Number(match[1])) : []);
-  const expected = variableIndexes.length ? Math.max(...variableIndexes) : 0;
-  if (parameters.length !== expected) throw new Error(`O template ${template.name} exige ${expected} parâmetro(s).`);
   const lines: string[] = [];
+  const components: Array<Record<string, unknown>> = [];
+  const buttons = structuredClone(template.components.find((component) => component.type === "BUTTONS")?.buttons ?? []);
+  const variableCount = (text = "") => [...text.matchAll(/\{\{(\d+)\}\}/g)].reduce((maximum, match) => Math.max(maximum, Number(match[1])), 0);
+  const consume = (count: number) => {
+    const values = parameters.slice(cursor, cursor + count);
+    cursor += count;
+    return values;
+  };
+  const render = (text: string, values: string[]) => text.replace(/\{\{(\d+)\}\}/g, (_match, index) => values[Number(index) - 1] ?? `{{${index}}}`);
+
   for (const component of template.components) {
-    if (["HEADER", "BODY", "FOOTER"].includes(component.type) && typeof component.text === "string") lines.push(render(component.text));
+    if (["HEADER", "BODY"].includes(component.type) && typeof component.text === "string") {
+      const values = consume(variableCount(component.text));
+      lines.push(render(component.text, values));
+      if (values.length) components.push({ type: component.type.toLowerCase(), parameters: values.map((text) => ({ type: "text", text })) });
+    } else if (component.type === "FOOTER" && typeof component.text === "string") {
+      lines.push(component.text);
+    } else if (component.type === "BUTTONS" && Array.isArray(component.buttons)) {
+      component.buttons.forEach((button: Record<string, any>, index: number) => {
+        if (button.type !== "URL" || typeof button.url !== "string") return;
+        const count = variableCount(button.url);
+        const values = consume(count);
+        if (count) {
+          components.push({ type: "button", sub_type: "url", index: String(index), parameters: values.map((text) => ({ type: "text", text })) });
+          if (buttons[index]) buttons[index].url = render(button.url, values);
+        }
+      });
+    }
   }
-  const bodyParameters = parameters.map((text) => ({ type: "text", text })); cursor += bodyParameters.length;
-  const components = bodyParameters.length ? [{ type: "body", parameters: bodyParameters }] : [];
-  return { text: lines.filter(Boolean).join("\n\n"), components, buttons: template.components.find((component) => component.type === "BUTTONS")?.buttons ?? [], parameterCount: cursor };
+  if (parameters.length !== cursor) throw new Error(`O template ${template.name} exige ${cursor} parâmetro(s).`);
+  return { text: lines.filter(Boolean).join("\n\n"), components, buttons, parameterCount: cursor };
+}
+
+export function resolveApprovedTemplate(templates: TemplateDefinition[], name: string, language: string) {
+  const canonicalName = templateAliases[name] ?? name;
+  return templates.find((item) => item.name === canonicalName && item.language === language);
 }
 
 export async function createIntegrationMessage(idempotencyKey: string, input: IntegrationMessageInput) {
   const organizationId = await defaultOrganizationId();
   const templates = await approvedTemplates();
-  const definition = templates.find((item) => item.name === input.template && item.language === input.language);
+  const definition = resolveApprovedTemplate(templates, input.template, input.language);
   if (!definition) throw new Error("Template não encontrado, não aprovado ou idioma incompatível.");
   const snapshot = buildTemplateSnapshot(definition, input.parameters);
+  const templateName = definition.name;
   const scheduledFor = input.sendAt ?? new Date();
   const connection = await pool.getConnection();
   try {
@@ -57,14 +87,14 @@ export async function createIntegrationMessage(idempotencyKey: string, input: In
       FROM organizations o LEFT JOIN sla_policies s ON s.organization_id = o.id WHERE o.id = ?`, [conversationId, organizationId, persistedContactId, organizationId]);
     const [conversations] = await connection.execute<RowDataPacket[]>("SELECT id FROM conversations WHERE organization_id = ? AND contact_id = ? LIMIT 1", [organizationId, persistedContactId]);
     const persistedConversationId = String(conversations[0]!.id); const messageId = crypto.randomUUID(); const jobId = crypto.randomUUID();
-    const content = { template: input.template, language: input.language, parameters: input.parameters, components: snapshot.components, buttons: snapshot.buttons, origin: "integration", source: String(input.metadata?.source ?? "site"), externalId: input.externalId ?? null, metadata: input.metadata ?? null, scheduledFor: scheduledFor.toISOString() };
+    const content = { template: templateName, requestedTemplate: input.template, language: input.language, parameters: input.parameters, components: snapshot.components, buttons: snapshot.buttons, origin: "integration", source: String(input.metadata?.source ?? "site"), externalId: input.externalId ?? null, metadata: input.metadata ?? null, scheduledFor: scheduledFor.toISOString() };
     await connection.execute(`INSERT INTO messages (id, organization_id, conversation_id, direction, type, text_body, content, status)
       VALUES (?, ?, ?, 'outbound', 'template', ?, ?, 'queued')`, [messageId, organizationId, persistedConversationId, snapshot.text, JSON.stringify(content)]);
     await connection.execute(`INSERT INTO integration_message_jobs
       (id, organization_id, conversation_id, message_id, idempotency_key, external_id, phone, template_name, language, parameters, metadata, scheduled_for)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [jobId, organizationId, persistedConversationId, messageId, idempotencyKey, input.externalId ?? null, input.to, input.template, input.language, JSON.stringify(input.parameters), input.metadata ? JSON.stringify(input.metadata) : null, scheduledFor]);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [jobId, organizationId, persistedConversationId, messageId, idempotencyKey, input.externalId ?? null, input.to, templateName, input.language, JSON.stringify(input.parameters), input.metadata ? JSON.stringify(input.metadata) : null, scheduledFor]);
     await connection.execute("UPDATE conversations SET last_message_preview = ?, last_message_at = NOW(3) WHERE id = ?", [snapshot.text.slice(0, 500), persistedConversationId]);
-    await connection.execute(`INSERT INTO audit_logs (organization_id, action, entity_type, entity_id, metadata) VALUES (?, 'integration.message.created', 'message', ?, ?)`, [organizationId, messageId, JSON.stringify({ idempotencyKey, template: input.template, externalId: input.externalId ?? null })]);
+    await connection.execute(`INSERT INTO audit_logs (organization_id, action, entity_type, entity_id, metadata) VALUES (?, 'integration.message.created', 'message', ?, ?)`, [organizationId, messageId, JSON.stringify({ idempotencyKey, template: templateName, requestedTemplate: input.template, externalId: input.externalId ?? null })]);
     await connection.commit(); publish(organizationId, { type: "message", direction: "outbound", conversationId: persistedConversationId }); void processJobs();
     return { id: jobId, status: scheduledFor.getTime() > Date.now() + 1000 ? "scheduled" : "queued", messageId, conversationId: persistedConversationId, scheduledFor, duplicate: false };
   } catch (error: any) {
@@ -99,15 +129,19 @@ let processing = false; let worker: NodeJS.Timeout | undefined;
 async function processJobs() {
   if (processing) return; processing = true;
   try {
-    const [rows] = await pool.execute<RowDataPacket[]>(`SELECT id, organization_id AS organizationId, conversation_id AS conversationId,
-      message_id AS messageId, phone, template_name AS templateName, language, parameters, attempts
-      FROM integration_message_jobs WHERE status = 'pending' AND scheduled_for <= NOW(3) ORDER BY scheduled_for LIMIT 20`);
+    const [rows] = await pool.execute<RowDataPacket[]>(`SELECT j.id, j.organization_id AS organizationId, j.conversation_id AS conversationId,
+      j.message_id AS messageId, j.phone, j.template_name AS templateName, j.language, j.parameters, j.attempts, m.content
+      FROM integration_message_jobs j JOIN messages m ON m.id = j.message_id
+      WHERE j.status = 'pending' AND j.scheduled_for <= NOW(3) ORDER BY j.scheduled_for LIMIT 20`);
     for (const job of rows) {
       const [claim] = await pool.execute<ResultSetHeader>("UPDATE integration_message_jobs SET status = 'processing', attempts = attempts + 1 WHERE id = ? AND status = 'pending'", [job.id]);
       if (!claim.affectedRows) continue;
       try {
         const parameters = typeof job.parameters === "string" ? JSON.parse(job.parameters) : job.parameters;
-        const components = parameters.length ? [{ type: "body", parameters: parameters.map((text: string) => ({ type: "text", text })) }] : [];
+        const content = typeof job.content === "string" ? JSON.parse(job.content) : job.content;
+        const components = Array.isArray(content?.components)
+          ? content.components
+          : parameters.length ? [{ type: "body", parameters: parameters.map((text: string) => ({ type: "text", text })) }] : [];
         const result = await sendTemplate(String(job.phone), String(job.templateName), String(job.language), components);
         await pool.execute("UPDATE messages SET meta_message_id = ?, status = 'sent', sent_at = NOW(3) WHERE id = ?", [result.messageId, job.messageId]);
         await pool.execute("UPDATE integration_message_jobs SET status = 'sent', processed_at = NOW(3), error_message = NULL WHERE id = ?", [job.id]);
