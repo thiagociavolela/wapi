@@ -2,7 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { requireAuth } from "../modules/auth/auth.js";
-import { addNote, assignConversation, changeStatus, countConversations, createContact, createQuickReply, getMessageMedia, getMessages, listContacts, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, markConversationUnread, openConversationForAgent, reactToMessage, replaceTags, retryAgentMedia, sendAgentMedia, sendAgentTemplate, sendAgentText, signalAgentTyping, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
+import { addNote, assignConversation, changeStatus, countConversations, createContact, createQuickReply, getMessageMedia, getMessages, listContacts, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, markConversationUnread, openConversationForAgent, reactToMessage, replaceTags, retryAgentMessage, sendAgentMedia, sendAgentTemplate, sendAgentText, signalAgentTyping, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
 import { cancelScheduledMessage, createScheduledMessage, listScheduledMessages, updateScheduledMessage } from "../modules/conversations/scheduled.js";
 import { convertVoiceToOgg } from "../modules/conversations/audio.js";
 import { subscribe } from "../modules/realtime/events.js";
@@ -142,9 +142,9 @@ apiRouter.post("/conversations/:id/voice", mediaUpload.single("file"), async (re
     res.status(201).json(await sendAgentMedia(req.auth!.organizationId, req.auth!.id, String(req.params.id), { buffer, mimeType: "audio/ogg", fileName: "gravacao.ogg" }));
   } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar áudio." }); }
 });
-apiRouter.post("/conversations/:id/messages/:messageId/retry-media", async (req, res) => {
-  try { res.json(await retryAgentMedia(req.auth!.organizationId, req.auth!.id, String(req.params.id), String(req.params.messageId))); }
-  catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao reenviar mídia." }); }
+apiRouter.post("/conversations/:id/messages/:messageId/retry", async (req, res) => {
+  try { res.json(await retryAgentMessage(req.auth!.organizationId, req.auth!.id, String(req.params.id), String(req.params.messageId))); }
+  catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao reenviar mensagem." }); }
 });
 apiRouter.get("/messages/:id/media", async (req, res) => {
   try {
