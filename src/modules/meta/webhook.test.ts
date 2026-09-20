@@ -5,6 +5,7 @@ describe("normalização de mensagens", () => {
   it("extrai texto e respostas interativas", () => {
     expect(extractText({ type: "text", text: { body: "Olá" } })).toBe("Olá");
     expect(extractText({ type: "interactive", interactive: { button_reply: { title: "Financeiro" } } })).toBe("Financeiro");
+    expect(extractText({ type: "order", order: { text: "Quero estes produtos" } })).toBe("Quero estes produtos");
   });
 
   it("aceita o envelope oficial e a amostra direta do painel Meta", () => {

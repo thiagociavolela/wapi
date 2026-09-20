@@ -82,3 +82,35 @@ export async function listMessageTemplates() {
     `${config.META_WABA_ID}/message_templates?fields=id,name,status,category,language,components&limit=250`
   );
 }
+
+export interface CatalogProduct {
+  id?: string;
+  retailerId: string;
+  name?: string;
+  description?: string;
+  price?: string | number;
+  currency?: string;
+  imageUrl?: string;
+}
+
+export async function getCatalogProduct(catalogId: string, retailerId: string): Promise<CatalogProduct | null> {
+  const params = new URLSearchParams({
+    fields: "id,name,description,price,currency,image_url,retailer_id",
+    filter: JSON.stringify({ retailer_id: { eq: retailerId } }),
+    limit: "10"
+  });
+  const payload = await metaFetch<{ data?: Array<Record<string, unknown>> }>(`${encodeURIComponent(catalogId)}/products?${params}`, {
+    signal: AbortSignal.timeout(5000)
+  });
+  const item = payload.data?.find((candidate) => String(candidate.retailer_id ?? "") === retailerId) ?? payload.data?.[0];
+  if (!item) return null;
+  return {
+    id: item.id ? String(item.id) : undefined,
+    retailerId: String(item.retailer_id ?? retailerId),
+    name: item.name ? String(item.name) : undefined,
+    description: item.description ? String(item.description) : undefined,
+    price: typeof item.price === "number" || typeof item.price === "string" ? item.price : undefined,
+    currency: item.currency ? String(item.currency) : undefined,
+    imageUrl: item.image_url ? String(item.image_url) : undefined
+  };
+}

@@ -3,6 +3,7 @@ import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { pool } from "../../database/pool.js";
 import { publish } from "../realtime/events.js";
 import { defaultOrganizationId } from "../conversations/service.js";
+import { getCatalogProduct } from "./client.js";
 
 type Json = Record<string, any>;
 
@@ -53,6 +54,7 @@ export function extractChanges(payload: Json): Json[] {
 
 async function processInbound(organizationId: string, message: Json, profileName?: string) {
   if (!message.id || !message.from) return;
+  const storedMessage = await enrichCatalogMessage(message);
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -89,14 +91,14 @@ async function processInbound(organizationId: string, message: Json, profileName
       await markEventProcessed(connection, `message:${message.id}`); await connection.commit();
       publish(organizationId, { type: "reaction", conversationId }); return;
     }
-    const text = extractText(message);
+    const text = extractText(storedMessage);
     const replyToMetaMessageId = message.context?.id ? String(message.context.id) : null;
     let replyTargetId: string | null = null;
     if (replyToMetaMessageId) { const [replyTargets] = await connection.execute<RowDataPacket[]>("SELECT id FROM messages WHERE organization_id = ? AND meta_message_id = ? LIMIT 1", [organizationId, replyToMetaMessageId]); replyTargetId = replyTargets[0]?.id ? String(replyTargets[0].id) : null; }
     await connection.execute(`INSERT IGNORE INTO messages
       (id, organization_id, conversation_id, meta_message_id, reply_to_message_id, reply_to_meta_message_id, direction, type, text_body, content, status, created_at)
       VALUES (?, ?, ?, ?, ?, ?, 'inbound', ?, ?, ?, 'received', FROM_UNIXTIME(?))`,
-      [crypto.randomUUID(), organizationId, conversationId, message.id, replyTargetId, replyToMetaMessageId, message.type ?? "unknown", text, JSON.stringify(message), Number(message.timestamp) || Math.floor(Date.now() / 1000)]);
+      [crypto.randomUUID(), organizationId, conversationId, message.id, replyTargetId, replyToMetaMessageId, message.type ?? "unknown", text, JSON.stringify(storedMessage), Number(message.timestamp) || Math.floor(Date.now() / 1000)]);
     await connection.execute(`UPDATE conversations SET status = IF(status = 'resolved', 'new', status),
       unread_count = unread_count + 1, service_window_expires_at = DATE_ADD(NOW(3), INTERVAL 24 HOUR),
       last_message_preview = ?, last_message_at = FROM_UNIXTIME(?) WHERE id = ?`,
@@ -154,5 +156,20 @@ export function extractText(message: Json): string | null {
   if (message.type === "interactive") return message.interactive?.button_reply?.title ?? message.interactive?.list_reply?.title ?? null;
   if (["image", "video", "document"].includes(message.type)) return message[message.type]?.caption ?? null;
   if (message.type === "location") return message.location?.name ?? message.location?.address ?? "Localização";
+  if (message.type === "order") return message.order?.text ?? "Pedido do catálogo";
   return null;
+}
+
+export async function enrichCatalogMessage(message: Json): Promise<Json> {
+  const reference = message.context?.referred_product;
+  const catalogId = reference?.catalog_id ?? message.order?.catalog_id;
+  const retailerId = reference?.product_retailer_id;
+  if (!catalogId || !retailerId) return message;
+  try {
+    const product = await getCatalogProduct(String(catalogId), String(retailerId));
+    return product ? { ...message, catalog_product: product } : message;
+  } catch (error) {
+    console.warn("Não foi possível consultar o produto do catálogo da Meta:", error instanceof Error ? error.message : error);
+    return message;
+  }
 }

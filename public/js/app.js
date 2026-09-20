@@ -17,9 +17,31 @@ function dayLabel(value) {
   return new Intl.DateTimeFormat('pt-BR', { timeZone: SYSTEM_TIME_ZONE, day: '2-digit', month: 'long', year: dayKey(date).slice(0, 4) === dayKey(today).slice(0, 4) ? undefined : 'numeric' }).format(date);
 }
 function windowOpen(item) { return item?.serviceWindowExpiresAt && new Date(item.serviceWindowExpiresAt) > new Date(); }
+function safeImageUrl(value) { try { const url = new URL(String(value)); return ['https:', 'http:'].includes(url.protocol) ? url.href : ''; } catch { return ''; } }
+function catalogPrice(product = {}) {
+  if (product.formattedPrice) return String(product.formattedPrice);
+  if (product.price == null) return '';
+  const amount = Number(product.price);
+  if (product.currency && Number.isFinite(amount)) {
+    try { return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: String(product.currency) }).format(amount / 100); } catch { /* exibe o valor original abaixo */ }
+  }
+  return `${product.price}${product.currency ? ` ${product.currency}` : ''}`;
+}
+function catalogProductCard(product = {}, fallback = {}) {
+  const name = product.name || fallback.product_retailer_id || 'Produto do catálogo';
+  const price = catalogPrice(product);
+  const imageUrl = safeImageUrl(product.imageUrl || product.image_url);
+  return `<div class="catalog-product-card"><div class="catalog-product-copy"><span>Produto do catálogo</span><strong>${escapeHtml(name)}</strong>${price ? `<b>${escapeHtml(price)}</b>` : ''}</div>${imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(name)}" loading="lazy">` : '<div class="catalog-product-placeholder" aria-hidden="true">▣</div>'}</div>`;
+}
 function messageContent(item) {
   const url = `/api/messages/${encodeURIComponent(item.id)}/media`;
   const content = typeof item.content === 'string' ? JSON.parse(item.content || '{}') : (item.content || {});
+  const referredProduct = content.context?.referred_product;
+  if (referredProduct) return `${catalogProductCard(content.catalog_product, referredProduct)}${item.textBody ? `<p class="catalog-message-text">${escapeHtml(item.textBody)}</p>` : ''}`;
+  if (item.type === 'order' && content.order) {
+    const products = Array.isArray(content.order.product_items) ? content.order.product_items : [];
+    return `<div class="catalog-order"><span>Pedido do catálogo</span>${products.map(product => catalogProductCard({ retailerId: product.product_retailer_id, name: product.product_retailer_id, price: product.item_price != null ? Number(product.item_price) * 100 : undefined, currency: product.currency }, product)).join('')}</div>${content.order.text ? `<p class="catalog-message-text">${escapeHtml(content.order.text)}</p>` : ''}`;
+  }
   if (item.type === 'template') {
     const buttons = Array.isArray(content.buttons) ? content.buttons : [];
     return `<p>${escapeHtml(item.textBody || `Template: ${content.template || 'mensagem'}`).replaceAll('\n', '<br>')}</p>${buttons.length ? `<div class="message-template-buttons">${buttons.map(button => button.url ? `<a href="${escapeHtml(button.url)}" target="_blank" rel="noopener">${escapeHtml(button.text || 'Abrir')}</a>` : `<span>${escapeHtml(button.text || 'Ação')}</span>`).join('')}</div>` : ''}`;
