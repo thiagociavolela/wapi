@@ -46,6 +46,61 @@ export async function countConversations(organizationId: string, search = "") {
   return rows[0] || {};
 }
 
+export async function listContacts(organizationId: string, search = "", status?: "new" | "open" | "pending" | "resolved", page = 1, limit = 25) {
+  const term = `%${search.trim()}%`;
+  const offset = (page - 1) * limit;
+  const where = `ct.organization_id = ? AND (? = '' OR c.status = ?)
+      AND (? = '%%' OR ct.name LIKE ? OR ct.profile_name LIKE ? OR ct.phone LIKE ? OR ct.wa_id LIKE ?)`;
+  const params = [organizationId, status || "", status || "", term, term, term, term, term];
+  const [itemsResult, countResult] = await Promise.all([
+    pool.execute<RowDataPacket[]>(`
+    SELECT ct.id AS contactId, ct.name, ct.profile_name AS profileName, ct.phone, ct.wa_id AS waId,
+      ct.created_at AS contactCreatedAt, c.id, c.status, c.priority, c.unread_count AS unreadCount,
+      c.service_window_expires_at AS serviceWindowExpiresAt, c.last_message_preview AS lastMessagePreview,
+      c.last_message_at AS lastMessageAt, c.assigned_user_id AS assignedUserId, u.name AS assignedUserName,
+      t.id AS teamId, t.name AS teamName, t.color AS teamColor,
+      (SELECT MAX(im.created_at) FROM messages im WHERE im.conversation_id = c.id AND im.direction = 'inbound') AS lastCustomerMessageAt
+    FROM contacts ct
+    LEFT JOIN conversations c ON c.contact_id = ct.id AND c.organization_id = ct.organization_id
+    LEFT JOIN users u ON u.id = c.assigned_user_id
+    LEFT JOIN teams t ON t.id = c.team_id
+    WHERE ${where}
+    ORDER BY COALESCE(c.last_message_at, ct.updated_at) DESC, ct.created_at DESC
+    LIMIT ? OFFSET ?`, [...params, limit, offset]),
+    pool.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total FROM contacts ct
+      LEFT JOIN conversations c ON c.contact_id = ct.id AND c.organization_id = ct.organization_id
+      WHERE ${where}`, params)
+  ]);
+  const items = itemsResult[0];
+  const total = Number(countResult[0][0]?.total || 0);
+  return { items, pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) } };
+}
+
+export async function createContact(organizationId: string, name: string, phone: string) {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [existing] = await connection.execute<RowDataPacket[]>(
+      "SELECT id FROM contacts WHERE organization_id = ? AND wa_id = ? LIMIT 1", [organizationId, phone]);
+    if (existing.length) throw new Error("Este telefone já está cadastrado.");
+    const contactId = crypto.randomUUID(); const conversationId = crypto.randomUUID();
+    await connection.execute(
+      "INSERT INTO contacts (id, organization_id, wa_id, phone, name) VALUES (?, ?, ?, ?, ?)",
+      [contactId, organizationId, phone, phone, name]);
+    await connection.execute(`INSERT INTO conversations
+      (id, organization_id, contact_id, status, first_response_due_at, resolution_due_at)
+      SELECT ?, ?, ?, 'new', DATE_ADD(NOW(3), INTERVAL COALESCE(s.first_response_minutes, 15) MINUTE),
+        DATE_ADD(NOW(3), INTERVAL COALESCE(s.resolution_minutes, 480) MINUTE)
+      FROM organizations o LEFT JOIN sla_policies s ON s.organization_id = o.id WHERE o.id = ?`,
+      [conversationId, organizationId, contactId, organizationId]);
+    await connection.commit();
+    publish(organizationId, { type: "conversation", conversationId });
+    return { id: conversationId, contactId, name, phone, waId: phone, status: "new", unreadCount: 0 };
+  } catch (error) {
+    await connection.rollback(); throw error;
+  } finally { connection.release(); }
+}
+
 export async function getMessages(organizationId: string, conversationId: string, before?: string) {
   const params: any[] = [organizationId, conversationId];
   let cursor = "";
@@ -243,10 +298,23 @@ export async function addNote(organizationId: string, userId: string, conversati
   return { id };
 }
 
-export async function listQuickReplies(organizationId: string) {
-  const [rows] = await pool.execute<RowDataPacket[]>(`SELECT id, shortcut, title, body FROM quick_replies
-    WHERE organization_id = ? AND active = TRUE ORDER BY title`, [organizationId]);
+export async function listQuickReplies(organizationId: string, userId: string) {
+  const [rows] = await pool.execute<RowDataPacket[]>(`SELECT id, shortcut, title, body, user_id AS userId FROM quick_replies
+    WHERE organization_id = ? AND active = TRUE AND (user_id IS NULL OR user_id = ?)
+    ORDER BY user_id IS NULL DESC, title`, [organizationId, userId]);
   return rows;
+}
+
+export async function createQuickReply(organizationId: string, userId: string, input: { shortcut: string; title: string; body: string }) {
+  const id = crypto.randomUUID();
+  try {
+    await pool.execute(`INSERT INTO quick_replies (id, organization_id, user_id, shortcut, title, body)
+      VALUES (?, ?, ?, ?, ?, ?)`, [id, organizationId, userId, input.shortcut, input.title, input.body]);
+  } catch (error: any) {
+    if (error?.code === "ER_DUP_ENTRY") throw new Error("Você já possui uma mensagem rápida com este atalho.");
+    throw error;
+  }
+  return { id, ...input, userId };
 }
 
 export async function listTags(organizationId: string, conversationId: string) {

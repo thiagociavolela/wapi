@@ -2,8 +2,8 @@ import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { requireAuth } from "../modules/auth/auth.js";
-import { addNote, assignConversation, changeStatus, countConversations, getMessageMedia, getMessages, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, markConversationUnread, openConversationForAgent, reactToMessage, replaceTags, retryAgentMedia, sendAgentMedia, sendAgentTemplate, sendAgentText, signalAgentTyping, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
-import { cancelScheduledMessage, createScheduledMessage, listScheduledMessages } from "../modules/conversations/scheduled.js";
+import { addNote, assignConversation, changeStatus, countConversations, createContact, createQuickReply, getMessageMedia, getMessages, listContacts, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, markConversationUnread, openConversationForAgent, reactToMessage, replaceTags, retryAgentMedia, sendAgentMedia, sendAgentTemplate, sendAgentText, signalAgentTyping, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
+import { cancelScheduledMessage, createScheduledMessage, listScheduledMessages, updateScheduledMessage } from "../modules/conversations/scheduled.js";
 import { convertVoiceToOgg } from "../modules/conversations/audio.js";
 import { subscribe } from "../modules/realtime/events.js";
 import { isMetaConfigured } from "../config.js";
@@ -11,6 +11,12 @@ import { listMessageTemplates } from "../modules/meta/client.js";
 import { createTeam, createUser, getDashboard, getIntegrationDashboard, getSlaPolicy, listManagedUsers, listTeams, updateSlaPolicy, updateTeam, updateUser } from "../modules/management/service.js";
 
 export const apiRouter = Router();
+const scheduledMessageSchema = z.discriminatedUnion("messageType", [
+  z.object({ messageType: z.literal("text"), body: z.string().trim().min(1).max(4096), scheduledFor: z.coerce.date() }),
+  z.object({ messageType: z.literal("template"), body: z.string().trim().min(1).max(4096), scheduledFor: z.coerce.date(),
+    templateName: z.string().trim().min(1).max(512).regex(/^[a-z0-9_]+$/), templateLanguage: z.string().trim().min(2).max(20),
+    templateComponents: z.array(z.unknown()).default([]) })
+]);
 const mediaUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024, files: 1 },
@@ -25,15 +31,42 @@ apiRouter.get("/conversations", async (req, res) => {
   const [items, counts] = await Promise.all([listConversations(req.auth!.organizationId, search, status), countConversations(req.auth!.organizationId, search)]);
   res.json({ items, counts });
 });
+apiRouter.get("/contacts", async (req, res) => {
+  const query = z.object({
+    status: z.enum(["new", "open", "pending", "resolved"]).optional().catch(undefined),
+    search: z.string().max(160).default("").catch(""),
+    page: z.coerce.number().int().min(1).default(1),
+    limit: z.coerce.number().int().min(10).max(50).default(25)
+  }).parse(req.query);
+  res.json(await listContacts(req.auth!.organizationId, query.search, query.status, query.page, query.limit));
+});
+apiRouter.post("/contacts", async (req, res) => {
+  const parsed = z.object({
+    name: z.string().trim().min(2).max(160),
+    countryCode: z.enum(["1", "33", "34", "39", "44", "49", "54", "55", "56", "57", "351", "595", "598"]).default("55"),
+    phone: z.string().transform((value) => value.replace(/\D/g, "")).refine((value) => /^\d{8,12}$/.test(value))
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Informe um nome e um telefone com DDD e código do país." });
+  const fullPhone = `${parsed.data.countryCode}${parsed.data.phone}`;
+  if (fullPhone.length > 15) return res.status(400).json({ error: "O telefone informado é muito longo." });
+  try { res.status(201).json(await createContact(req.auth!.organizationId, parsed.data.name, fullPhone)); }
+  catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : "Não foi possível cadastrar o contato." }); }
+});
 apiRouter.get("/conversations/:id/messages", async (req, res) => res.json(await getMessages(req.auth!.organizationId, String(req.params.id), req.query.before ? String(req.query.before) : undefined)));
 apiRouter.post("/conversations/:id/read", async (req, res) => res.json({ ok: await markConversationRead(req.auth!.organizationId, String(req.params.id)) }));
 apiRouter.post("/conversations/:id/unread", async (req, res) => res.json({ ok: await markConversationUnread(req.auth!.organizationId, String(req.params.id)) }));
 apiRouter.get("/conversations/:id/scheduled", async (req, res) => res.json({ items: await listScheduledMessages(req.auth!.organizationId, String(req.params.id)) }));
 apiRouter.post("/conversations/:id/scheduled", async (req, res) => {
-  const parsed = z.object({ body: z.string().trim().min(1).max(4096), scheduledFor: z.coerce.date() }).safeParse(req.body);
+  const parsed = scheduledMessageSchema.safeParse(req.body);
   if (!parsed.success || parsed.data.scheduledFor.getTime() < Date.now() + 30000) return res.status(400).json({ error: "Escolha uma data futura e informe a mensagem." });
-  try { res.status(201).json(await createScheduledMessage(req.auth!.organizationId, req.auth!.id, String(req.params.id), parsed.data.body, parsed.data.scheduledFor)); }
+  try { res.status(201).json(await createScheduledMessage(req.auth!.organizationId, req.auth!.id, String(req.params.id), parsed.data)); }
   catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao agendar mensagem." }); }
+});
+apiRouter.patch("/scheduled/:id", async (req, res) => {
+  const parsed = scheduledMessageSchema.safeParse(req.body);
+  if (!parsed.success || parsed.data.scheduledFor.getTime() < Date.now() + 30000) return res.status(400).json({ error: "Escolha uma data futura e informe a mensagem." });
+  try { res.json(await updateScheduledMessage(req.auth!.organizationId, String(req.params.id), parsed.data)); }
+  catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : "Não foi possível editar o agendamento." }); }
 });
 apiRouter.delete("/scheduled/:id", async (req, res) => {
   const ok = await cancelScheduledMessage(req.auth!.organizationId, String(req.params.id));
@@ -41,7 +74,13 @@ apiRouter.delete("/scheduled/:id", async (req, res) => {
   res.json({ ok: true });
 });
 apiRouter.get("/users", async (req, res) => res.json({ items: await listUsers(req.auth!.organizationId) }));
-apiRouter.get("/quick-replies", async (req, res) => res.json({ items: await listQuickReplies(req.auth!.organizationId) }));
+apiRouter.get("/quick-replies", async (req, res) => res.json({ items: await listQuickReplies(req.auth!.organizationId, req.auth!.id) }));
+apiRouter.post("/quick-replies", async (req, res) => {
+  const parsed = z.object({ shortcut: z.string().trim().toLowerCase().regex(/^\/[a-z0-9_-]{2,39}$/), title: z.string().trim().min(2).max(100), body: z.string().trim().min(1).max(4096) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Informe título, mensagem e um atalho como /retorno." });
+  try { res.status(201).json(await createQuickReply(req.auth!.organizationId, req.auth!.id, parsed.data)); }
+  catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : "Não foi possível adicionar a mensagem rápida." }); }
+});
 apiRouter.get("/templates", async (_req, res) => {
   try {
     const result = await listMessageTemplates();

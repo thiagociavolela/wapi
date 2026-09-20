@@ -2,7 +2,7 @@ import { api } from './api.js';
 
 const $ = (selector) => document.querySelector(selector);
 const SYSTEM_TIME_ZONE = 'America/Sao_Paulo';
-const state = { user: null, users: [], teams: [], quickReplies: [], templates: [], tags: [], conversations: [], messages: [], pendingMessages: [], pastedFiles: [], pastedFileIndex: 0, pasteObjectUrls: [], active: null, status: 'new', searchTimer: null, replyTo: null, actionMessage: null, contextConversation: null, assignmentConversationId: null, scheduleConversationId: null, emojiMode: 'insert', recorder: null, typingTimer: null, pendingOpenConversationId: null, soundEnabled: localStorage.getItem('chat.notificationSound') !== 'off', notificationAudio: null };
+const state = { user: null, users: [], teams: [], quickReplies: [], quickReplyMatches: [], quickReplyIndex: -1, templates: [], tags: [], contacts: [], conversations: [], messages: [], scheduledMessages: [], pendingMessages: [], pastedFiles: [], pastedFileIndex: 0, pasteObjectUrls: [], active: null, status: 'new', contactStatus: '', contactPage: 1, contactPages: 1, contactTotal: 0, searchTimer: null, contactSearchTimer: null, replyTo: null, actionMessage: null, contextConversation: null, assignmentConversationId: null, scheduleConversationId: null, scheduleEditingId: null, emojiMode: 'insert', recorder: null, typingTimer: null, pendingOpenConversationId: null, soundEnabled: localStorage.getItem('chat.notificationSound') !== 'off', notificationAudio: null };
 
 function escapeHtml(value = '') { const node = document.createElement('div'); node.textContent = String(value); return node.innerHTML; }
 function initials(name = '?') { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase(); }
@@ -83,7 +83,7 @@ async function openConversation(id) {
   $('#assign').querySelector('span').textContent = state.active.assignedUserName ? 'Reatribuir' : 'Assumir conversa';
   $('#status').value = state.active.status;
   $('#team-select').value = state.active.teamId || ''; $('#priority-select').value = state.active.priority || 'normal';
-  renderContactActivity(); updateWindow(); await Promise.all([loadMessages(), loadNotes(), loadTags(), api(`/api/conversations/${id}/read`, { method: 'POST' })]);
+  renderContactActivity(); updateWindow(); await Promise.all([loadMessages(), loadNotes(), loadTags(), loadDetailScheduledMessages(), api(`/api/conversations/${id}/read`, { method: 'POST' })]);
   layoutConversation();
 }
 
@@ -184,9 +184,19 @@ function renderTeamOptions() {
   $('#team-select').innerHTML = '<option value="">Sem equipe</option>' + state.teams.filter(team => team.active).map(team => `<option value="${team.id}">${escapeHtml(team.name)}</option>`).join('');
 }
 
-function renderQuickReplies() {
-  $('#quick-replies-popover').innerHTML = state.quickReplies.length ? state.quickReplies.map(item => `<button type="button" class="quick-reply" data-quick-id="${item.id}"><code>${escapeHtml(item.shortcut)}</code><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.body)}</small></button>`).join('') : '<div class="empty">Nenhuma resposta rápida configurada.</div>';
+function renderQuickReplies(items = state.quickReplies, filtering = false) {
+  state.quickReplyMatches = items;
+  $('#quick-replies-popover').innerHTML = `<div class="quick-popover-head"><div><strong>${filtering ? 'Sugestões de mensagens' : 'Mensagens rápidas'}</strong><small>${filtering ? 'Continue digitando para filtrar' : 'Respostas da equipe e pessoais'}</small></div><button type="button" data-add-quick-reply>＋ Nova</button></div><div class="quick-replies-list">${items.length ? items.map((item, index) => `<button type="button" class="quick-reply ${index === state.quickReplyIndex ? 'keyboard-active' : ''}" data-quick-id="${item.id}" data-quick-index="${index}"><code>${escapeHtml(item.shortcut)}</code><strong>${escapeHtml(item.title)}${item.userId ? '<i>Minha</i>' : ''}</strong><small>${escapeHtml(item.body)}</small></button>`).join('') : '<div class="empty">Nenhuma mensagem rápida encontrada.</div>'}</div>`;
 }
+
+function previewQuickReplies(value) {
+  const query = value.trim().toLowerCase();
+  if (!/^\/[^\s]*$/.test(query)) { $('#quick-replies-popover').classList.add('hidden'); state.quickReplyIndex = -1; return; }
+  const term = query.slice(1); const matches = state.quickReplies.filter(item => item.shortcut.slice(1).toLowerCase().startsWith(term) || item.title.toLowerCase().includes(term));
+  state.quickReplyIndex = matches.length ? 0 : -1; renderQuickReplies(matches, true); $('#quick-replies-popover').classList.remove('hidden');
+}
+
+function applyQuickReply(item) { if (!item) return; $('#message').value = item.body; $('#message').dispatchEvent(new Event('input')); $('#message').focus(); $('#quick-replies-popover').classList.add('hidden'); state.quickReplyIndex = -1; }
 
 async function loadNotes() {
   if (!state.active) return;
@@ -203,6 +213,41 @@ async function loadTags() {
 function openDialog(id) { const dialog = $(`#${id}`); if (!dialog.open) dialog.showModal(); }
 function closeDialog(id) { const dialog = $(`#${id}`); if (dialog.open) dialog.close(); }
 
+const contactStatusLabels = { new: 'Novo', open: 'Em atendimento', pending: 'Pendente', resolved: 'Concluído' };
+async function loadContacts() {
+  const list = $('#contacts-list');
+  list.innerHTML = '<div class="contacts-empty"><span class="contacts-loader"></span>Carregando contatos...</div>';
+  try {
+    const data = await api(`/api/contacts?search=${encodeURIComponent($('#contacts-search').value)}&status=${encodeURIComponent(state.contactStatus)}&page=${state.contactPage}&limit=25`);
+    state.contacts = data.items; state.contactPage = data.pagination.page; state.contactPages = data.pagination.pages; state.contactTotal = data.pagination.total;
+    $('#contacts-total').textContent = `${state.contactTotal} ${state.contactTotal === 1 ? 'contato' : 'contatos'}`; renderContacts(); renderContactsPagination();
+  } catch (error) { list.innerHTML = `<div class="contacts-empty error">${escapeHtml(error.message)}</div>`; }
+}
+function renderContacts() {
+  $('#contacts-list').innerHTML = state.contacts.length ? state.contacts.map(item => {
+    const name = displayName(item); const status = item.status || 'new';
+    return `<article class="contact-row"><span class="contact-avatar">${escapeHtml(initials(name))}</span><div class="contact-main"><div><strong>${escapeHtml(name)}</strong><span class="contact-status ${escapeHtml(status)}">${escapeHtml(contactStatusLabels[status] || 'Sem conversa')}</span></div><small>${escapeHtml(item.phone || item.waId || '')}</small><p>${escapeHtml(item.lastMessagePreview || 'Contato cadastrado')}</p></div><div class="contact-meta"><time>${item.lastMessageAt ? dateTime(item.lastMessageAt) : 'Sem mensagens'}</time><small>${escapeHtml(item.assignedUserName || 'Não atribuído')}</small><button type="button" data-open-contact="${item.id || ''}" ${item.id ? '' : 'disabled'}>Abrir conversa <span>→</span></button></div></article>`;
+  }).join('') : '<div class="contacts-empty"><span class="contacts-empty-icon">◎</span><strong>Nenhum contato encontrado</strong><small>Tente outro nome, telefone ou filtro.</small></div>';
+}
+function renderContactsPagination() {
+  $('#contacts-page-info').textContent = `Página ${state.contactPage} de ${state.contactPages}`;
+  $('#contacts-previous').disabled = state.contactPage <= 1;
+  $('#contacts-next').disabled = state.contactPage >= state.contactPages;
+}
+
+$('#contacts-button').addEventListener('click', async () => { state.contactPage = 1; openDialog('contacts-dialog'); await loadContacts(); requestAnimationFrame(() => $('#contacts-search').focus()); });
+$('#new-contact-button').addEventListener('click', () => { $('#new-contact-form').reset(); $('#new-contact-error').textContent = ''; openDialog('new-contact-dialog'); requestAnimationFrame(() => $('#new-contact-name').focus()); });
+$('#contacts-search').addEventListener('input', () => { clearTimeout(state.contactSearchTimer); state.contactPage = 1; state.contactSearchTimer = setTimeout(loadContacts, 250); });
+document.querySelectorAll('[data-contact-status]').forEach(button => button.addEventListener('click', async () => { document.querySelectorAll('[data-contact-status]').forEach(item => item.classList.remove('active')); button.classList.add('active'); state.contactStatus = button.dataset.contactStatus; state.contactPage = 1; await loadContacts(); }));
+$('#contacts-previous').addEventListener('click', async () => { if (state.contactPage > 1) { state.contactPage -= 1; await loadContacts(); $('#contacts-list').scrollTop = 0; } });
+$('#contacts-next').addEventListener('click', async () => { if (state.contactPage < state.contactPages) { state.contactPage += 1; await loadContacts(); $('#contacts-list').scrollTop = 0; } });
+$('#contacts-list').addEventListener('click', async event => {
+  const button = event.target.closest('[data-open-contact]'); if (!button?.dataset.openContact) return;
+  const contact = state.contacts.find(item => item.id === button.dataset.openContact); if (!contact) return;
+  if (!state.conversations.some(item => item.id === contact.id)) state.conversations.unshift(contact);
+  closeDialog('contacts-dialog'); await openConversation(contact.id);
+});
+
 function closeConversationActions() { $('#conversation-actions').classList.add('hidden'); state.contextConversation = null; }
 function openConversationActions(conversation, x, y) {
   state.contextConversation = conversation;
@@ -216,16 +261,58 @@ function saoPauloInputValue(minutesAhead = 30) {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: SYSTEM_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(Date.now() + minutesAhead * 60000));
   const value = Object.fromEntries(parts.map(part => [part.type, part.value])); return `${value.year}-${value.month}-${value.day}T${value.hour}:${value.minute}`;
 }
+function saoPauloDateInput(value) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: SYSTEM_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(value));
+  const item = Object.fromEntries(parts.map(part => [part.type, part.value])); return `${item.year}-${item.month}-${item.day}T${item.hour}:${item.minute}`;
+}
+
+function renderDetailScheduledMessages() {
+  const pending = state.scheduledMessages.filter(item => item.status === 'pending' || item.status === 'processing');
+  $('#detail-scheduled-section').classList.toggle('hidden', !pending.length); $('#detail-scheduled-count').textContent = pending.length;
+  $('#detail-scheduled-list').innerHTML = pending.map(item => `<article><div class="scheduled-detail-icon">◷</div><div><strong>${item.messageType === 'template' ? escapeHtml(item.templateName) : escapeHtml(item.body)}</strong><small>${item.messageType === 'template' ? 'Template Meta' : 'Texto livre'} · ${dateTime(item.scheduledFor)}</small></div><div class="scheduled-detail-actions"><button type="button" data-edit-detail-schedule="${item.id}" title="Editar agendamento">✎</button><button type="button" data-cancel-detail-schedule="${item.id}" title="Cancelar agendamento">×</button></div></article>`).join('');
+}
+
+async function loadDetailScheduledMessages() {
+  if (!state.active) return;
+  const data = await api(`/api/conversations/${state.active.id}/scheduled`); state.scheduledMessages = data.items; renderDetailScheduledMessages();
+}
 
 async function loadScheduledMessages() {
   if (!state.scheduleConversationId) return;
-  const data = await api(`/api/conversations/${state.scheduleConversationId}/scheduled`);
-  $('#scheduled-list').innerHTML = data.items.length ? `<div class="scheduled-title">Próximos agendamentos</div>${data.items.map(item => `<article><div><strong>${escapeHtml(item.body)}</strong><small>${dateTime(item.scheduledFor)} · ${item.status === 'failed' ? escapeHtml(item.errorMessage || 'Falhou') : item.status === 'processing' ? 'Processando' : 'Agendada'}</small></div>${item.status === 'pending' ? `<button type="button" data-cancel-schedule="${item.id}" title="Cancelar agendamento">×</button>` : ''}</article>`).join('')}` : '';
+  const data = await api(`/api/conversations/${state.scheduleConversationId}/scheduled`); state.scheduledMessages = data.items;
+  $('#scheduled-list').innerHTML = data.items.length ? `<div class="scheduled-title">Próximos agendamentos</div>${data.items.map(item => `<article><div><strong>${item.messageType === 'template' ? `Template: ${escapeHtml(item.templateName)}` : escapeHtml(item.body)}</strong><small>${dateTime(item.scheduledFor)} · ${item.status === 'failed' ? escapeHtml(item.errorMessage || 'Falhou') : item.status === 'processing' ? 'Processando' : 'Agendada'}</small></div>${item.status === 'pending' ? `<button type="button" data-cancel-schedule="${item.id}" title="Cancelar agendamento">×</button>` : ''}</article>`).join('')}` : '';
 }
 
-async function openScheduleDialog(conversation) {
-  state.scheduleConversationId = conversation.id; $('#schedule-avatar').textContent = initials(displayName(conversation)); $('#schedule-name').textContent = displayName(conversation); $('#schedule-body').value = ''; $('#schedule-at').value = saoPauloInputValue(); $('#schedule-at').min = saoPauloInputValue(1); $('#schedule-error').textContent = '';
-  await loadScheduledMessages(); openDialog('schedule-dialog');
+async function openScheduleDialog(conversation, scheduled = null) {
+  state.scheduleConversationId = conversation.id; state.scheduleEditingId = scheduled?.id || null; $('#schedule-avatar').textContent = initials(displayName(conversation)); $('#schedule-name').textContent = displayName(conversation); $('#schedule-body').value = scheduled?.messageType === 'text' ? scheduled.body : ''; $('#schedule-at').value = scheduled ? saoPauloDateInput(scheduled.scheduledFor) : saoPauloInputValue(); $('#schedule-at').min = saoPauloInputValue(1); $('#schedule-error').textContent = ''; $('#schedule-message-type').value = scheduled?.messageType || 'template'; updateScheduleMessageType(); openDialog('schedule-dialog');
+  $('#schedule-form .primary').textContent = scheduled ? 'Salvar alterações' : 'Confirmar agendamento';
+  try {
+    const data = await api('/api/templates'); state.templates = data.items;
+    $('#schedule-template-select').innerHTML = '<option value="">Selecione um template</option>' + state.templates.map((item, index) => `<option value="${index}">${escapeHtml(item.name)} · ${escapeHtml(item.language)} · ${escapeHtml(item.category)}</option>`).join('');
+    const selectedIndex = scheduled?.messageType === 'template' ? state.templates.findIndex(item => item.name === scheduled.templateName && item.language === scheduled.templateLanguage) : 0;
+    if (state.templates.length && selectedIndex >= 0) { $('#schedule-template-select').value = String(selectedIndex); renderScheduleTemplate(state.templates[selectedIndex]); const stored = typeof scheduled?.templateComponents === 'string' ? JSON.parse(scheduled.templateComponents) : (scheduled?.templateComponents || []); document.querySelectorAll('[data-schedule-template-component]').forEach(input => { const component = stored.find(item => item.type?.toUpperCase() === input.dataset.scheduleTemplateComponent); input.value = component?.parameters?.[Number(input.dataset.variableIndex) - 1]?.text || ''; }); updateScheduleTemplatePreview(); }
+  } catch (error) { $('#schedule-template-select').innerHTML = '<option value="">Templates indisponíveis</option>'; $('#schedule-error').textContent = error.message; }
+  await loadScheduledMessages();
+}
+
+function updateScheduleMessageType() {
+  const template = $('#schedule-message-type').value === 'template';
+  $('#schedule-template-fields').classList.toggle('hidden', !template); $('#schedule-text-fields').classList.toggle('hidden', template);
+  $('#schedule-template-select').required = template; $('#schedule-body').required = !template;
+  $('.schedule-warning p').textContent = template ? 'O template aprovado pode ser enviado mesmo fora da janela de atendimento de 24 horas.' : 'O envio de texto livre só ocorrerá se a janela de atendimento de 24 horas estiver aberta nesse horário.';
+}
+
+function renderScheduleTemplate(template) {
+  const preview = $('#schedule-template-preview'); if (!template) { preview.classList.add('hidden'); $('#schedule-template-variables').innerHTML = ''; return; }
+  const header = template.components?.find(component => component.type === 'HEADER')?.text || ''; const body = template.components?.find(component => component.type === 'BODY')?.text || ''; const footer = template.components?.find(component => component.type === 'FOOTER')?.text || ''; const fields = [];
+  for (const component of template.components || []) { if (!['BODY', 'HEADER'].includes(component.type) || typeof component.text !== 'string') continue; const indexes = [...component.text.matchAll(/\{\{(\d+)\}\}/g)].map(match => Number(match[1])); for (const index of [...new Set(indexes)].sort((a, b) => a - b)) fields.push(`<label>Variável ${index} · ${component.type.toLowerCase()}<input data-schedule-template-component="${component.type}" data-variable-index="${index}" required placeholder="Valor de {{${index}}}"></label>`); }
+  $('#schedule-template-variables').innerHTML = fields.join(''); preview.dataset.header = header; preview.dataset.body = body; preview.dataset.footer = footer; updateScheduleTemplatePreview(); preview.classList.remove('hidden');
+}
+
+function updateScheduleTemplatePreview() {
+  const preview = $('#schedule-template-preview'); let body = preview.dataset.body || ''; let header = preview.dataset.header || '';
+  document.querySelectorAll('[data-schedule-template-component]').forEach(input => { if (input.dataset.scheduleTemplateComponent === 'HEADER') header = header.replaceAll(`{{${input.dataset.variableIndex}}}`, input.value || `{{${input.dataset.variableIndex}}}`); else body = body.replaceAll(`{{${input.dataset.variableIndex}}}`, input.value || `{{${input.dataset.variableIndex}}}`); });
+  preview.innerHTML = `${header ? `<strong>${escapeHtml(header)}</strong>` : ''}<p>${escapeHtml(body).replaceAll('\n', '<br>')}</p>${preview.dataset.footer ? `<small>${escapeHtml(preview.dataset.footer)}</small>` : ''}`;
 }
 
 $('#conversation-list').addEventListener('contextmenu', event => {
@@ -253,10 +340,21 @@ $('#conversation-actions').addEventListener('click', async event => {
 
 $('#schedule-form').addEventListener('submit', async event => {
   event.preventDefault(); const submit = event.submitter; submit.disabled = true; $('#schedule-error').textContent = '';
-  try { await api(`/api/conversations/${state.scheduleConversationId}/scheduled`, { method: 'POST', body: JSON.stringify({ body: $('#schedule-body').value, scheduledFor: $('#schedule-at').value }) }); $('#schedule-body').value = ''; await loadScheduledMessages(); toast('Mensagem agendada com sucesso.'); }
+  const messageType = $('#schedule-message-type').value; const template = messageType === 'template' && $('#schedule-template-select').value !== '' ? state.templates[Number($('#schedule-template-select').value)] : null;
+  const templateComponents = [...document.querySelectorAll('[data-schedule-template-component]')].reduce((items, input) => { const type = input.dataset.scheduleTemplateComponent.toLowerCase(); let component = items.find(item => item.type === type); if (!component) { component = { type, parameters: [] }; items.push(component); } component.parameters.push({ type: 'text', text: input.value }); return items; }, []);
+  const payload = messageType === 'template' ? { messageType, body: template?.components?.find(component => component.type === 'BODY')?.text || `Template: ${template?.name || ''}`, scheduledFor: $('#schedule-at').value, templateName: template?.name, templateLanguage: template?.language, templateComponents } : { messageType, body: $('#schedule-body').value, scheduledFor: $('#schedule-at').value };
+  try { if (messageType === 'template' && !template) throw new Error('Selecione um template aprovado.'); const editing = state.scheduleEditingId; await api(editing ? `/api/scheduled/${editing}` : `/api/conversations/${state.scheduleConversationId}/scheduled`, { method: editing ? 'PATCH' : 'POST', body: JSON.stringify(payload) }); $('#schedule-body').value = ''; closeDialog('schedule-dialog'); state.scheduleConversationId = null; state.scheduleEditingId = null; if (state.active) await loadDetailScheduledMessages(); toast(editing ? 'Agendamento atualizado.' : 'Mensagem agendada com sucesso.'); }
   catch (error) { $('#schedule-error').textContent = error.message; } finally { submit.disabled = false; }
 });
+$('#schedule-message-type').addEventListener('change', updateScheduleMessageType);
+$('#schedule-template-select').addEventListener('change', event => renderScheduleTemplate(event.target.value === '' ? null : state.templates[Number(event.target.value)]));
+$('#schedule-template-variables').addEventListener('input', updateScheduleTemplatePreview);
 $('#scheduled-list').addEventListener('click', async event => { const button = event.target.closest('[data-cancel-schedule]'); if (!button) return; try { await api(`/api/scheduled/${button.dataset.cancelSchedule}`, { method: 'DELETE' }); await loadScheduledMessages(); toast('Agendamento cancelado.'); } catch (error) { toast(error.message); } });
+$('#detail-scheduled-list').addEventListener('click', async event => {
+  const edit = event.target.closest('[data-edit-detail-schedule]'); const cancel = event.target.closest('[data-cancel-detail-schedule]');
+  if (edit) { const item = state.scheduledMessages.find(schedule => schedule.id === edit.dataset.editDetailSchedule); if (item && state.active) await openScheduleDialog(state.active, item); return; }
+  if (cancel) { try { await api(`/api/scheduled/${cancel.dataset.cancelDetailSchedule}`, { method: 'DELETE' }); await loadDetailScheduledMessages(); toast('Agendamento cancelado.'); } catch (error) { toast(error.message); } }
+});
 document.addEventListener('click', event => { if (!event.target.closest('#conversation-actions')) closeConversationActions(); });
 document.addEventListener('keydown', event => { if (event.key === 'Escape') closeConversationActions(); });
 window.addEventListener('blur', closeConversationActions);
@@ -395,13 +493,20 @@ $('#priority-select').addEventListener('change', async event => { await api(`/ap
 $('#logout').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); location.href = '/login.html'; });
 $('#message').addEventListener('input', event => {
   event.target.style.height = 'auto'; event.target.style.height = `${Math.min(event.target.scrollHeight, 140)}px`;
+  previewQuickReplies(event.target.value);
   if (!event.target.value.trim() || !state.active) return;
   clearTimeout(state.typingTimer); state.typingTimer = setTimeout(() => api(`/api/conversations/${state.active.id}/typing`, { method: 'POST' }).catch(() => {}), 350);
 });
-$('#message').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); $('#composer').requestSubmit(); } });
+$('#message').addEventListener('keydown', event => {
+  const quickOpen = !$('#quick-replies-popover').classList.contains('hidden') && /^\/[^\s]*$/.test(event.currentTarget.value.trim());
+  if (quickOpen && ['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); if (!state.quickReplyMatches.length) return; const direction = event.key === 'ArrowDown' ? 1 : -1; state.quickReplyIndex = (state.quickReplyIndex + direction + state.quickReplyMatches.length) % state.quickReplyMatches.length; renderQuickReplies(state.quickReplyMatches, true); $('#quick-replies-popover [data-quick-index].keyboard-active')?.scrollIntoView({ block: 'nearest' }); return; }
+  if (quickOpen && ['Enter', 'Tab'].includes(event.key) && state.quickReplyIndex >= 0) { event.preventDefault(); applyQuickReply(state.quickReplyMatches[state.quickReplyIndex]); return; }
+  if (quickOpen && event.key === 'Escape') { event.preventDefault(); $('#quick-replies-popover').classList.add('hidden'); return; }
+  if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); $('#composer').requestSubmit(); }
+});
 $('#mobile-back').addEventListener('click', () => $('.app-shell').classList.remove('chat-open'));
-$('#quick-replies-button').addEventListener('click', () => $('#quick-replies-popover').classList.toggle('hidden'));
-$('#quick-replies-popover').addEventListener('click', event => { const button = event.target.closest('[data-quick-id]'); if (!button) return; const item = state.quickReplies.find(reply => reply.id === button.dataset.quickId); if (item) { $('#message').value = item.body; $('#message').focus(); } $('#quick-replies-popover').classList.add('hidden'); });
+$('#quick-replies-button').addEventListener('click', () => { const opening = $('#quick-replies-popover').classList.contains('hidden'); state.quickReplyIndex = -1; if (opening) renderQuickReplies(); $('#quick-replies-popover').classList.toggle('hidden', !opening); });
+$('#quick-replies-popover').addEventListener('click', event => { if (event.target.closest('[data-add-quick-reply]')) { $('#quick-reply-form').reset(); $('#quick-reply-error').textContent = ''; $('#quick-replies-popover').classList.add('hidden'); openDialog('quick-reply-dialog'); requestAnimationFrame(() => $('#quick-reply-title').focus()); return; } const button = event.target.closest('[data-quick-id]'); if (!button) return; applyQuickReply(state.quickReplies.find(reply => reply.id === button.dataset.quickId)); });
 $('#template-button').addEventListener('click', async () => {
   if (!state.active) return; openDialog('template-dialog'); $('#template-error').textContent = '';
   try {
@@ -462,6 +567,21 @@ $('#note-form').addEventListener('submit', async event => { event.preventDefault
 $('#tag-form').addEventListener('submit', async event => { event.preventDefault(); const name = $('#tag-name').value.trim().toLowerCase(); const names = [...new Set([...state.tags.map(tag => tag.name), name])]; await api(`/api/conversations/${state.active.id}/tags`, { method: 'PUT', body: JSON.stringify({ names }) }); $('#tag-name').value = ''; closeDialog('tag-dialog'); await Promise.all([loadTags(), loadConversations()]); toast('Etiqueta adicionada.'); });
 $('#tag-list').addEventListener('click', async event => { const button = event.target.closest('[data-remove-tag]'); if (!button) return; const names = state.tags.map(tag => tag.name).filter(name => name !== button.dataset.removeTag); await api(`/api/conversations/${state.active.id}/tags`, { method: 'PUT', body: JSON.stringify({ names }) }); await Promise.all([loadTags(), loadConversations()]); });
 $('#contact-form').addEventListener('submit', async event => { event.preventDefault(); await api(`/api/conversations/${state.active.id}/contact`, { method: 'PATCH', body: JSON.stringify({ name: $('#contact-name').value }) }); closeDialog('contact-dialog'); await loadConversations(); await openConversation(state.active.id); toast('Contato atualizado.'); });
+$('#quick-reply-form').addEventListener('submit', async event => {
+  event.preventDefault(); const submit = event.submitter; submit.disabled = true; $('#quick-reply-error').textContent = '';
+  let shortcut = $('#quick-reply-shortcut').value.trim().toLowerCase(); if (!shortcut.startsWith('/')) shortcut = `/${shortcut}`;
+  try { const item = await api('/api/quick-replies', { method: 'POST', body: JSON.stringify({ title: $('#quick-reply-title').value, shortcut, body: $('#quick-reply-body').value }) }); state.quickReplies.push(item); renderQuickReplies(); closeDialog('quick-reply-dialog'); toast('Mensagem rápida adicionada.'); }
+  catch (error) { $('#quick-reply-error').textContent = error.message; } finally { submit.disabled = false; }
+});
+$('#new-contact-form').addEventListener('submit', async event => {
+  event.preventDefault(); const submit = event.submitter; submit.disabled = true; $('#new-contact-error').textContent = '';
+  try {
+    const contact = await api('/api/contacts', { method: 'POST', body: JSON.stringify({ name: $('#new-contact-name').value, countryCode: $('#new-contact-country').value, phone: $('#new-contact-phone').value }) });
+    closeDialog('new-contact-dialog'); if (!state.conversations.some(item => item.id === contact.id)) state.conversations.unshift(contact);
+    await openConversation(contact.id); toast('Contato adicionado.');
+  } catch (error) { $('#new-contact-error').textContent = error.message; }
+  finally { submit.disabled = false; }
+});
 $('#template-select').addEventListener('change', event => renderTemplateForm(event.target.value === '' ? null : state.templates[Number(event.target.value)]));
 $('#template-form').addEventListener('submit', async event => {
   event.preventDefault(); $('#template-error').textContent = ''; const selectedIndex = $('#template-select').value; const template = selectedIndex === '' ? null : state.templates[Number(selectedIndex)];
