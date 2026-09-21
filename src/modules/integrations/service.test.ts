@@ -39,6 +39,6 @@ describe("buildTemplateSnapshot", () => {
 describe("catalog template components", () => {
   it("builds the required MPM action with product IDs", () => {
     const template = { name: "catalogo", status: "APPROVED", language: "pt_BR", category: "MARKETING", components: [{ type: "BUTTONS", buttons: [{ type: "MPM", text: "Ver itens" }] }] };
-    expect(buildCommerceTemplateComponents(template, ["101", "103"], "Ofertas")).toEqual([{ type: "button", sub_type: "mpm", index: "0", parameters: [{ type: "action", action: { thumbnail_product_retailer_id: "101", sections: [{ title: "Ofertas", product_items: [{ product_retailer_id: "101" }, { product_retailer_id: "103" }] }] } }] }]);
+    expect(buildCommerceTemplateComponents(template, ["101", "103"], "Ofertas")).toEqual([{ type: "button", sub_type: "mpm", index: 0, parameters: [{ type: "action", action: { thumbnail_product_retailer_id: "101", sections: [{ title: "Ofertas", product_items: [{ product_retailer_id: "101" }, { product_retailer_id: "103" }] }] } }] }]);
   });
 });

@@ -66,7 +66,7 @@ export function buildCommerceTemplateComponents(template: TemplateDefinition, pr
   const subtype = String(buttons[buttonIndex].type).toLowerCase();
   const action: Record<string, unknown> = { thumbnail_product_retailer_id: ids[0] };
   if (subtype === "mpm") action.sections = [{ title: sectionTitle.trim().slice(0, 24) || "Produtos", product_items: ids.map((product_retailer_id) => ({ product_retailer_id })) }];
-  return [{ type: "button", sub_type: subtype, index: String(buttonIndex), parameters: [{ type: "action", action }] }];
+  return [{ type: "button", sub_type: subtype, index: buttonIndex, parameters: [{ type: "action", action }] }];
 }
 
 export function resolveApprovedTemplate(templates: TemplateDefinition[], name: string, language: string) {

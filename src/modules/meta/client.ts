@@ -1,6 +1,9 @@
 import { config, isMetaConfigured } from "../../config.js";
 
-interface MetaResponse { messages?: Array<{ id: string }>; error?: { message: string; code: number } }
+type MetaError = { message?: string; code?: number; error_data?: { details?: string }; fbtrace_id?: string };
+interface MetaResponse { messages?: Array<{ id: string }>; error?: MetaError }
+const metaErrorMessage = (error: MetaError | undefined, status: number) =>
+  [error?.message ?? `Falha da Meta (${status}).`, error?.error_data?.details].filter(Boolean).join(" — ");
 
 async function metaFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!config.META_ACCESS_TOKEN) throw new Error("Token da Meta não configurado.");
@@ -8,8 +11,8 @@ async function metaFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     ...init,
     headers: { Authorization: `Bearer ${config.META_ACCESS_TOKEN}`, ...init.headers }
   });
-  const payload = await response.json() as T & { error?: { message?: string } };
-  if (!response.ok) throw new Error(payload.error?.message ?? `Falha da Meta (${response.status}).`);
+  const payload = await response.json() as T & { error?: MetaError };
+  if (!response.ok) throw new Error(metaErrorMessage(payload.error, response.status));
   return payload;
 }
 
@@ -24,7 +27,7 @@ export async function sendMetaMessage(to: string, message: Record<string, unknow
     }
   );
   const payload = await response.json() as MetaResponse;
-  if (!response.ok) throw new Error(payload.error?.message ?? `Falha da Meta (${response.status}).`);
+  if (!response.ok) throw new Error(metaErrorMessage(payload.error, response.status));
   const messageId = payload.messages?.[0]?.id;
   if (!messageId) throw new Error("A Meta não retornou o ID da mensagem.");
   return { messageId, payload };
