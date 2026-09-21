@@ -5,7 +5,7 @@ import { defaultOrganizationId } from "../conversations/service.js";
 import { listMessageTemplates, sendTemplate } from "../meta/client.js";
 import { publish } from "../realtime/events.js";
 
-type TemplateDefinition = { name: string; status: string; language: string; category: string; components: Array<Record<string, any>> };
+export type TemplateDefinition = { name: string; status: string; language: string; category: string; components: Array<Record<string, any>> };
 export type IntegrationMessageInput = { to: string; contactName?: string; template: string; language: string; parameters: string[]; sendAt?: Date; externalId?: string; metadata?: Record<string, unknown> };
 let templateCache: { expiresAt: number; items: TemplateDefinition[] } | null = null;
 
@@ -54,6 +54,19 @@ export function buildTemplateSnapshot(template: TemplateDefinition, parameters: 
   }
   if (parameters.length !== cursor) throw new Error(`O template ${template.name} exige ${cursor} parâmetro(s).`);
   return { text: lines.filter(Boolean).join("\n\n"), components, buttons, parameterCount: cursor };
+}
+
+export function buildCommerceTemplateComponents(template: TemplateDefinition, productIds: string[], sectionTitle = "Produtos") {
+  const buttons = template.components.find((component) => String(component.type).toUpperCase() === "BUTTONS")?.buttons ?? [];
+  const buttonIndex = buttons.findIndex((button: Record<string, unknown>) => ["MPM", "CATALOG"].includes(String(button.type).toUpperCase()));
+  if (buttonIndex < 0) return [];
+  const ids = [...new Set(productIds.map((value) => value.trim()).filter(Boolean))];
+  if (!ids.length) throw new Error("Informe pelo menos um ID de produto do catálogo.");
+  if (ids.length > 30) throw new Error("O template de catálogo aceita até 30 produtos.");
+  const subtype = String(buttons[buttonIndex].type).toLowerCase();
+  const action: Record<string, unknown> = { thumbnail_product_retailer_id: ids[0] };
+  if (subtype === "mpm") action.sections = [{ title: sectionTitle.trim().slice(0, 24) || "Produtos", product_items: ids.map((product_retailer_id) => ({ product_retailer_id })) }];
+  return [{ type: "button", sub_type: subtype, index: String(buttonIndex), parameters: [{ type: "action", action }] }];
 }
 
 export function resolveApprovedTemplate(templates: TemplateDefinition[], name: string, language: string) {

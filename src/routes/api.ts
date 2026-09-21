@@ -10,7 +10,7 @@ import { isMetaConfigured } from "../config.js";
 import { listMessageTemplates } from "../modules/meta/client.js";
 import { createTeam, createUser, getDashboard, getIntegrationDashboard, getSlaPolicy, listManagedUsers, listTeams, updateSlaPolicy, updateTeam, updateUser } from "../modules/management/service.js";
 import { changeCampaignStatus, createCampaign, getCampaign, listCampaigns, parseCampaignContacts } from "../modules/campaigns/service.js";
-import { buildTemplateSnapshot } from "../modules/integrations/service.js";
+import { buildCommerceTemplateComponents, buildTemplateSnapshot } from "../modules/integrations/service.js";
 
 export const apiRouter = Router();
 const scheduledMessageSchema = z.discriminatedUnion("messageType", [
@@ -243,7 +243,8 @@ apiRouter.post(["/campaigns", "/campaigns/create"], requireManager, async (req, 
   const parsed = z.object({
     name: z.string().trim().min(2).max(160), description: z.string().trim().max(500).optional(),
     templateName: z.string().trim().min(1).max(512), templateLanguage: z.string().trim().min(2).max(20),
-    parameters: z.array(z.string().max(1024)).max(30).default([]), delaySeconds: z.number().int().min(1).max(300),
+    parameters: z.array(z.string().max(1024)).max(30).default([]), catalogProductIds: z.array(z.string().trim().min(1).max(128)).max(30).default([]),
+    catalogSectionTitle: z.string().trim().min(1).max(24).default("Produtos"), delaySeconds: z.number().int().min(1).max(300),
     scheduledFor: z.coerce.date().optional(), recipients: z.array(z.object({ phone: z.string().max(32), name: z.string().max(160).optional() })).min(1).max(5000),
     saveContacts: z.boolean().default(false)
   }).safeParse(req.body);
@@ -253,6 +254,7 @@ apiRouter.post(["/campaigns", "/campaigns/create"], requireManager, async (req, 
     const template = templates.find((item) => item.status === "APPROVED" && item.name === parsed.data.templateName && item.language === parsed.data.templateLanguage);
     if (!template) return res.status(422).json({ error: "Template não encontrado ou não aprovado pela Meta." });
     const snapshot = buildTemplateSnapshot(template as any, parsed.data.parameters);
+    snapshot.components.push(...buildCommerceTemplateComponents(template as any, parsed.data.catalogProductIds, parsed.data.catalogSectionTitle));
     res.status(201).json(await createCampaign(req.auth!.organizationId, req.auth!.id, { ...parsed.data, templateComponents: snapshot.components, templatePreview: snapshot.text }));
   } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Não foi possível criar a campanha." }); }
 });

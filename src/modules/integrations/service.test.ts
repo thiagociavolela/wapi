@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTemplateSnapshot, resolveApprovedTemplate } from "./service.js";
+import { buildCommerceTemplateComponents, buildTemplateSnapshot, resolveApprovedTemplate } from "./service.js";
 
 describe("buildTemplateSnapshot", () => {
   const template = {
@@ -33,5 +33,12 @@ describe("buildTemplateSnapshot", () => {
   it("resolve o nome legado para o template aprovado na Meta", () => {
     const approved = [{ ...template, name: "pedido_pendente_finalizacao_br" }];
     expect(resolveApprovedTemplate(approved, "pedido_pendente_finalizacao", "pt_BR")?.name).toBe("pedido_pendente_finalizacao_br");
+  });
+});
+
+describe("catalog template components", () => {
+  it("builds the required MPM action with product IDs", () => {
+    const template = { name: "catalogo", status: "APPROVED", language: "pt_BR", category: "MARKETING", components: [{ type: "BUTTONS", buttons: [{ type: "MPM", text: "Ver itens" }] }] };
+    expect(buildCommerceTemplateComponents(template, ["101", "103"], "Ofertas")).toEqual([{ type: "button", sub_type: "mpm", index: "0", parameters: [{ type: "action", action: { thumbnail_product_retailer_id: "101", sections: [{ title: "Ofertas", product_items: [{ product_retailer_id: "101" }, { product_retailer_id: "103" }] }] } }] }]);
   });
 });
