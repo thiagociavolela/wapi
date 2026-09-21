@@ -239,7 +239,7 @@ apiRouter.post("/campaigns/import", requireManager, contactListUpload.single("fi
   if (!req.file || !/\.(csv|txt)$/i.test(req.file.originalname)) return res.status(400).json({ error: "Envie um arquivo CSV ou TXT de até 2 MB." });
   res.json(parseCampaignContacts(req.file.buffer.toString("utf8"), req.file.originalname));
 });
-apiRouter.post("/campaigns", requireManager, async (req, res) => {
+apiRouter.post(["/campaigns", "/campaigns/create"], requireManager, async (req, res) => {
   const parsed = z.object({
     name: z.string().trim().min(2).max(160), description: z.string().trim().max(500).optional(),
     templateName: z.string().trim().min(1).max(512), templateLanguage: z.string().trim().min(2).max(20),
