@@ -64,6 +64,7 @@ async function init() {
   renderSoundPreference();
   state.user = (await api('/api/auth/me')).user;
   document.querySelectorAll('[data-manager-only]').forEach(item => item.classList.toggle('hidden', state.user.role === 'agent'));
+  document.querySelectorAll('[data-admin-only]').forEach(item => item.classList.toggle('hidden', state.user.role !== 'admin'));
   const [users, teams, quickReplies] = await Promise.all([api('/api/users'), api('/api/management/teams'), api('/api/quick-replies')]);
   state.users = users.items; state.teams = teams.items; state.quickReplies = quickReplies.items;
   renderAgentOptions(); renderTeamOptions(); renderQuickReplies(); await loadConversations();

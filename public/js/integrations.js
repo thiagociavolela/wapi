@@ -9,7 +9,7 @@ const shortTime = value => value ? new Intl.DateTimeFormat('pt-BR', { timeZone: 
 const statusNames = { pending: 'Agendada', processing: 'Processando', sent: 'Enviada', failed: 'Falhou', cancelled: 'Cancelada', queued: 'Na fila', delivered: 'Entregue', read: 'Lida' };
 function toast(message) { $('#toast').textContent = message; $('#toast').classList.remove('hidden'); setTimeout(() => $('#toast').classList.add('hidden'), 3000); }
 
-async function init() { const me = (await api('/api/auth/me')).user; $('#profile').textContent = `${me.name} · ${me.role}`; await loadDashboard(); }
+async function init() { const me = (await api('/api/auth/me')).user; if (me.role !== 'admin') return location.replace('/'); $('#profile').textContent = `${me.name} · ${me.role}`; await loadDashboard(); }
 function query() { const params = new URLSearchParams({ page: String(state.page), limit: '30' }); const values = { search: $('#filter-search').value.trim(), status: $('#filter-status').value, template: $('#filter-template').value, from: $('#filter-from').value, to: $('#filter-to').value }; Object.entries(values).forEach(([key, value]) => { if (value) params.set(key, value); }); return params; }
 async function loadDashboard() {
   if (state.loading) return; state.loading = true; $('#refresh').disabled = true;

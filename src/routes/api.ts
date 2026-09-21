@@ -183,7 +183,7 @@ apiRouter.put("/conversations/:id/tags", async (req, res) => {
   res.json({ items: await replaceTags(req.auth!.organizationId, req.auth!.id, String(req.params.id), names) });
 });
 apiRouter.get("/management/dashboard", requireManager, async (req, res) => res.json(await getDashboard(req.auth!.organizationId, req.auth!.role)));
-apiRouter.get("/management/integrations", requireManager, async (req, res) => {
+apiRouter.get("/management/integrations", requireAdmin, async (req, res) => {
   const parsed = z.object({ search: z.string().max(160).optional().catch(undefined), status: z.enum(["pending", "processing", "sent", "failed", "cancelled"]).optional().catch(undefined), template: z.string().max(512).optional().catch(undefined), from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().catch(undefined), to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().catch(undefined), page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(10).max(100).default(30) }).parse(req.query);
   res.json(await getIntegrationDashboard(req.auth!.organizationId, parsed));
 });
@@ -228,5 +228,9 @@ apiRouter.get("/events", (req, res) => {
 const teamSchema = z.object({ name: z.string().trim().min(2).max(100), color: z.string().regex(/^#[0-9a-fA-F]{6}$/), memberIds: z.array(z.string().uuid()).max(100) });
 function requireManager(req: any, res: any, next: any) {
   if (!req.auth || !["admin", "supervisor"].includes(req.auth.role)) return res.status(403).json({ error: "Permissão insuficiente." });
+  next();
+}
+function requireAdmin(req: any, res: any, next: any) {
+  if (!req.auth || req.auth.role !== "admin") return res.status(403).json({ error: "Acesso exclusivo para administradores." });
   next();
 }
