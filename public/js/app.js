@@ -262,7 +262,28 @@ function renderContactsPagination() {
 }
 
 $('#contacts-button').addEventListener('click', async () => { state.contactPage = 1; openDialog('contacts-dialog'); await loadContacts(); requestAnimationFrame(() => $('#contacts-search').focus()); });
-$('#new-contact-button').addEventListener('click', () => { $('#new-contact-form').reset(); $('#new-contact-error').textContent = ''; openDialog('new-contact-dialog'); requestAnimationFrame(() => $('#new-contact-name').focus()); });
+function setContactImportMode(importing) {
+  $('#single-contact-fields').classList.toggle('hidden', importing); $('#contact-import-fields').classList.toggle('hidden', !importing);
+  $('#save-contact-button').classList.toggle('hidden', importing); $('#import-contact-button').classList.toggle('hidden', !importing);
+  $('#new-contact-name').required = !importing; $('#new-contact-country').required = !importing; $('#new-contact-phone').required = !importing;
+  $('#toggle-contact-import').textContent = importing ? 'Adicionar individual' : 'Importar CSV'; $('#new-contact-error').textContent = '';
+  if (importing) requestAnimationFrame(() => $('#contact-import-file').click()); else requestAnimationFrame(() => $('#new-contact-name').focus());
+}
+$('#new-contact-button').addEventListener('click', () => { $('#new-contact-form').reset(); $('#contact-import-file-name').textContent = 'Nenhum arquivo selecionado'; setContactImportMode(false); openDialog('new-contact-dialog'); requestAnimationFrame(() => $('#new-contact-name').focus()); });
+$('#toggle-contact-import').addEventListener('click', () => setContactImportMode($('#contact-import-fields').classList.contains('hidden')));
+$('#contact-import-file').addEventListener('change', event => { $('#contact-import-file-name').textContent = event.target.files[0]?.name || 'Nenhum arquivo selecionado'; });
+$('#import-contact-button').addEventListener('click', async event => {
+  const file = $('#contact-import-file').files[0]; $('#new-contact-error').textContent = '';
+  if (!file) return ($('#new-contact-error').textContent = 'Selecione um arquivo CSV.');
+  event.currentTarget.disabled = true;
+  try {
+    const form = new FormData(); form.append('file', file); const result = await api('/api/contacts/import', { method: 'POST', body: form });
+    closeDialog('new-contact-dialog'); await loadConversations();
+    if ($('#contacts-dialog').open) { state.contactPage = 1; await loadContacts(); }
+    toast(`${result.created} contato(s) importado(s)${result.skipped ? ` · ${result.skipped} já cadastrado(s)` : ''}${result.invalid ? ` · ${result.invalid} inválido(s)` : ''}.`);
+  } catch (error) { $('#new-contact-error').textContent = error.message; }
+  finally { event.currentTarget.disabled = false; }
+});
 $('#contacts-search').addEventListener('input', () => { clearTimeout(state.contactSearchTimer); state.contactPage = 1; state.contactSearchTimer = setTimeout(loadContacts, 250); });
 document.querySelectorAll('[data-contact-status]').forEach(button => button.addEventListener('click', async () => { document.querySelectorAll('[data-contact-status]').forEach(item => item.classList.remove('active')); button.classList.add('active'); state.contactStatus = button.dataset.contactStatus; state.contactPage = 1; await loadContacts(); }));
 $('#contacts-previous').addEventListener('click', async () => { if (state.contactPage > 1) { state.contactPage -= 1; await loadContacts(); $('#contacts-list').scrollTop = 0; } });

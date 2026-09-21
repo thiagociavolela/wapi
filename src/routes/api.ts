@@ -2,7 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { requireAuth } from "../modules/auth/auth.js";
-import { addNote, assignConversation, changeStatus, countConversations, createContact, createQuickReply, getMessageMedia, getMessages, listContacts, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, markConversationUnread, openConversationForAgent, reactToMessage, replaceTags, retryAgentMessage, sendAgentMedia, sendAgentTemplate, sendAgentText, signalAgentTyping, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
+import { addNote, assignConversation, changeStatus, countConversations, createContact, createQuickReply, getMessageMedia, getMessages, importContacts, listContacts, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, markConversationUnread, openConversationForAgent, reactToMessage, replaceTags, retryAgentMessage, sendAgentMedia, sendAgentTemplate, sendAgentText, signalAgentTyping, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
 import { cancelScheduledMessage, createScheduledMessage, listScheduledMessages, updateScheduledMessage } from "../modules/conversations/scheduled.js";
 import { convertVoiceToOgg } from "../modules/conversations/audio.js";
 import { subscribe } from "../modules/realtime/events.js";
@@ -54,6 +54,16 @@ apiRouter.post("/contacts", async (req, res) => {
   if (fullPhone.length > 15) return res.status(400).json({ error: "O telefone informado é muito longo." });
   try { res.status(201).json(await createContact(req.auth!.organizationId, parsed.data.name, fullPhone)); }
   catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : "Não foi possível cadastrar o contato." }); }
+});
+apiRouter.post("/contacts/import", contactListUpload.single("file"), async (req, res) => {
+  if (!req.file || !/\.csv$/i.test(req.file.originalname)) return res.status(400).json({ error: "Selecione um arquivo CSV de até 2 MB." });
+  const parsed = parseCampaignContacts(req.file.buffer.toString("utf8"), req.file.originalname);
+  if (parsed.items.length > 5000) return res.status(400).json({ error: "Cada arquivo pode conter até 5.000 contatos." });
+  const contacts = parsed.items.filter((item): item is { phone: string; name: string } => Boolean(item.name?.trim()));
+  const missingNames = parsed.items.length - contacts.length;
+  if (!contacts.length) return res.status(400).json({ error: "O CSV deve conter as colunas nome e telefone." });
+  const result = await importContacts(req.auth!.organizationId, contacts);
+  res.status(201).json({ ...result, invalid: parsed.invalid.length + missingNames, duplicates: parsed.duplicates, total: parsed.items.length + parsed.invalid.length });
 });
 apiRouter.get("/conversations/:id/messages", async (req, res) => res.json(await getMessages(req.auth!.organizationId, String(req.params.id), req.query.before ? String(req.query.before) : undefined)));
 apiRouter.post("/conversations/:id/read", async (req, res) => res.json({ ok: await markConversationRead(req.auth!.organizationId, String(req.params.id)) }));

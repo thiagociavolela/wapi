@@ -101,6 +101,33 @@ export async function createContact(organizationId: string, name: string, phone:
   } finally { connection.release(); }
 }
 
+export async function importContacts(organizationId: string, contacts: Array<{ name: string; phone: string }>) {
+  const connection = await pool.getConnection();
+  let created = 0; let skipped = 0;
+  try {
+    await connection.beginTransaction();
+    for (const contact of contacts) {
+      const [existing] = await connection.execute<RowDataPacket[]>(
+        "SELECT id FROM contacts WHERE organization_id = ? AND wa_id = ? LIMIT 1", [organizationId, contact.phone]);
+      if (existing.length) { skipped += 1; continue; }
+      const contactId = crypto.randomUUID(); const conversationId = crypto.randomUUID();
+      await connection.execute("INSERT INTO contacts (id, organization_id, wa_id, phone, name) VALUES (?, ?, ?, ?, ?)",
+        [contactId, organizationId, contact.phone, contact.phone, contact.name]);
+      await connection.execute(`INSERT INTO conversations
+        (id, organization_id, contact_id, status, first_response_due_at, resolution_due_at)
+        SELECT ?, ?, ?, 'new', DATE_ADD(NOW(3), INTERVAL COALESCE(s.first_response_minutes, 15) MINUTE),
+          DATE_ADD(NOW(3), INTERVAL COALESCE(s.resolution_minutes, 480) MINUTE)
+        FROM organizations o LEFT JOIN sla_policies s ON s.organization_id = o.id WHERE o.id = ?`,
+        [conversationId, organizationId, contactId, organizationId]);
+      created += 1;
+    }
+    await connection.commit();
+    if (created) publish(organizationId, { type: "conversation" });
+    return { created, skipped };
+  } catch (error) { await connection.rollback(); throw error; }
+  finally { connection.release(); }
+}
+
 export async function getMessages(organizationId: string, conversationId: string, before?: string) {
   const params: any[] = [organizationId, conversationId];
   let cursor = "";
