@@ -3,7 +3,7 @@ import argon2 from "argon2";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "../../database/pool.js";
 
-export async function getDashboard(organizationId: string) {
+export async function getDashboard(organizationId: string, actorRole = "admin") {
   const [summary] = await pool.execute<RowDataPacket[]>(`SELECT
     COUNT(*) AS total,
     SUM(status = 'new') AS newCount,
@@ -29,7 +29,7 @@ export async function getDashboard(organizationId: string) {
     SUM(c.status = 'open') AS openCount,
     SUM(c.first_response_at IS NULL AND c.first_response_due_at < NOW(3) AND c.status <> 'resolved') AS slaBreached
     FROM users u LEFT JOIN conversations c ON c.assigned_user_id = u.id
-    WHERE u.organization_id = ? AND u.active = TRUE GROUP BY u.id, u.name ORDER BY openCount DESC`, [organizationId]);
+    WHERE u.organization_id = ? AND u.active = TRUE AND (? = 'admin' OR u.role <> 'admin') GROUP BY u.id, u.name ORDER BY openCount DESC`, [organizationId, actorRole]);
   const [teams] = await pool.execute<RowDataPacket[]>(`SELECT t.id, t.name, t.color, COUNT(c.id) AS conversations,
     SUM(c.status <> 'resolved') AS activeCount FROM teams t LEFT JOIN conversations c ON c.team_id = t.id
     WHERE t.organization_id = ? AND t.active = TRUE GROUP BY t.id, t.name, t.color ORDER BY t.name`, [organizationId]);
@@ -52,18 +52,18 @@ export async function getDashboard(organizationId: string) {
   const [recent] = await pool.execute<RowDataPacket[]>(`SELECT c.id, COALESCE(ct.name, ct.profile_name, ct.phone) AS contactName,
     ct.phone, c.status, c.priority, c.unread_count AS unreadCount, c.service_window_expires_at AS serviceWindowExpiresAt,
     c.last_message_at AS lastMessageAt, u.name AS assignedUserName
-    FROM conversations c JOIN contacts ct ON ct.id = c.contact_id LEFT JOIN users u ON u.id = c.assigned_user_id
+    FROM conversations c JOIN contacts ct ON ct.id = c.contact_id LEFT JOIN users u ON u.id = c.assigned_user_id AND (? = 'admin' OR u.role <> 'admin')
     WHERE c.organization_id = ?
-    ORDER BY c.last_message_at DESC, c.updated_at DESC LIMIT 12`, [organizationId]);
+    ORDER BY c.last_message_at DESC, c.updated_at DESC LIMIT 12`, [actorRole, organizationId]);
   return { summary: summary[0], agents, teams, messageSummary: messageSummary[0], dailyMessages, priorities, recent,
     averageFirstResponseSeconds: Number(response[0]?.averageFirstResponseSeconds ?? 0), generatedAt: new Date().toISOString() };
 }
 
-export async function listManagedUsers(organizationId: string) {
+export async function listManagedUsers(organizationId: string, actorRole: string) {
   const [rows] = await pool.execute<RowDataPacket[]>(`SELECT u.id, u.name, u.email, u.role, u.active, u.created_at AS createdAt,
     GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR '||') AS teamNames
     FROM users u LEFT JOIN team_members tm ON tm.user_id = u.id LEFT JOIN teams t ON t.id = tm.team_id
-    WHERE u.organization_id = ? GROUP BY u.id ORDER BY u.name`, [organizationId]);
+    WHERE u.organization_id = ? AND (? = 'admin' OR u.role <> 'admin') GROUP BY u.id ORDER BY u.name`, [organizationId, actorRole]);
   return rows;
 }
 
@@ -74,7 +74,10 @@ export async function createUser(organizationId: string, input: { name: string; 
   return { id };
 }
 
-export async function updateUser(organizationId: string, id: string, input: { name?: string; email?: string; role?: string; active?: boolean; password?: string }) {
+export async function updateUser(organizationId: string, id: string, input: { name?: string; email?: string; role?: string; active?: boolean; password?: string }, actorRole = "admin") {
+  const [targets] = await pool.execute<RowDataPacket[]>("SELECT role FROM users WHERE id = ? AND organization_id = ? LIMIT 1", [id, organizationId]);
+  if (!targets[0]) return false;
+  if (actorRole === "supervisor" && (targets[0].role === "admin" || input.role === "admin")) throw new Error("Supervisor não pode visualizar ou alterar administradores.");
   const fields: string[] = []; const values: unknown[] = [];
   if (input.name !== undefined) { fields.push("name = ?"); values.push(input.name); }
   if (input.email !== undefined) { fields.push("email = ?"); values.push(input.email.toLowerCase()); }
@@ -93,20 +96,20 @@ export async function listTeams(organizationId: string) {
   return rows;
 }
 
-export async function createTeam(organizationId: string, input: { name: string; color: string; memberIds: string[] }) {
+export async function createTeam(organizationId: string, input: { name: string; color: string; memberIds: string[] }, actorRole = "admin") {
   const id = crypto.randomUUID();
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
     await connection.execute("INSERT INTO teams (id, organization_id, name, color) VALUES (?, ?, ?, ?)", [id, organizationId, input.name, input.color]);
     for (const userId of input.memberIds) await connection.execute(`INSERT INTO team_members (team_id, user_id)
-      SELECT ?, id FROM users WHERE id = ? AND organization_id = ?`, [id, userId, organizationId]);
+      SELECT ?, id FROM users WHERE id = ? AND organization_id = ? AND (? = 'admin' OR role <> 'admin')`, [id, userId, organizationId, actorRole]);
     await connection.commit();
   } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
   return { id };
 }
 
-export async function updateTeam(organizationId: string, id: string, input: { name: string; color: string; active: boolean; memberIds: string[] }) {
+export async function updateTeam(organizationId: string, id: string, input: { name: string; color: string; active: boolean; memberIds: string[] }, actorRole = "admin") {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -114,7 +117,7 @@ export async function updateTeam(organizationId: string, id: string, input: { na
     if (!result.affectedRows) { await connection.rollback(); return false; }
     await connection.execute("DELETE FROM team_members WHERE team_id = ?", [id]);
     for (const userId of input.memberIds) await connection.execute(`INSERT INTO team_members (team_id, user_id)
-      SELECT ?, id FROM users WHERE id = ? AND organization_id = ?`, [id, userId, organizationId]);
+      SELECT ?, id FROM users WHERE id = ? AND organization_id = ? AND (? = 'admin' OR role <> 'admin')`, [id, userId, organizationId, actorRole]);
     await connection.commit(); return true;
   } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
 }

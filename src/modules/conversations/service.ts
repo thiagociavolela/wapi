@@ -291,9 +291,9 @@ export async function getMessageMedia(organizationId: string, messageId: string)
   return downloadMedia(String(mediaId));
 }
 
-export async function listUsers(organizationId: string) {
+export async function listUsers(organizationId: string, actorRole = "admin") {
   const [rows] = await pool.execute<RowDataPacket[]>(
-    "SELECT id, name, email, role FROM users WHERE organization_id = ? AND active = TRUE ORDER BY name", [organizationId]);
+    "SELECT id, name, email, role FROM users WHERE organization_id = ? AND active = TRUE AND (? = 'admin' OR role <> 'admin') ORDER BY name", [organizationId, actorRole]);
   return rows;
 }
 

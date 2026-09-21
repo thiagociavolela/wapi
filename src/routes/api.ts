@@ -73,7 +73,7 @@ apiRouter.delete("/scheduled/:id", async (req, res) => {
   if (!ok) return res.status(409).json({ error: "Este agendamento não pode mais ser cancelado." });
   res.json({ ok: true });
 });
-apiRouter.get("/users", async (req, res) => res.json({ items: await listUsers(req.auth!.organizationId) }));
+apiRouter.get("/users", async (req, res) => res.json({ items: await listUsers(req.auth!.organizationId, req.auth!.role) }));
 apiRouter.get("/quick-replies", async (req, res) => res.json({ items: await listQuickReplies(req.auth!.organizationId, req.auth!.id) }));
 apiRouter.post("/quick-replies", async (req, res) => {
   const parsed = z.object({ shortcut: z.string().trim().toLowerCase().regex(/^\/[a-z0-9_-]{2,39}$/), title: z.string().trim().min(2).max(100), body: z.string().trim().min(1).max(4096) }).safeParse(req.body);
@@ -182,33 +182,35 @@ apiRouter.put("/conversations/:id/tags", async (req, res) => {
   const names = [...new Set(parsed.data.names.map((name) => name.toLowerCase()))];
   res.json({ items: await replaceTags(req.auth!.organizationId, req.auth!.id, String(req.params.id), names) });
 });
-apiRouter.get("/management/dashboard", async (req, res) => res.json(await getDashboard(req.auth!.organizationId)));
-apiRouter.get("/management/integrations", async (req, res) => {
+apiRouter.get("/management/dashboard", requireManager, async (req, res) => res.json(await getDashboard(req.auth!.organizationId, req.auth!.role)));
+apiRouter.get("/management/integrations", requireManager, async (req, res) => {
   const parsed = z.object({ search: z.string().max(160).optional().catch(undefined), status: z.enum(["pending", "processing", "sent", "failed", "cancelled"]).optional().catch(undefined), template: z.string().max(512).optional().catch(undefined), from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().catch(undefined), to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().catch(undefined), page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(10).max(100).default(30) }).parse(req.query);
   res.json(await getIntegrationDashboard(req.auth!.organizationId, parsed));
 });
-apiRouter.get("/management/users", requireManager, async (req, res) => res.json({ items: await listManagedUsers(req.auth!.organizationId) }));
+apiRouter.get("/management/users", requireManager, async (req, res) => res.json({ items: await listManagedUsers(req.auth!.organizationId, req.auth!.role) }));
 apiRouter.post("/management/users", requireManager, async (req, res) => {
   const parsed = z.object({ name: z.string().trim().min(2).max(160), email: z.string().email(), password: z.string().min(10).max(200), role: z.enum(["admin", "supervisor", "agent"]) }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Dados do usuário inválidos." });
+  if (req.auth!.role === "supervisor" && parsed.data.role === "admin") return res.status(403).json({ error: "Supervisor pode criar apenas atendentes e supervisores." });
   res.status(201).json(await createUser(req.auth!.organizationId, parsed.data));
 });
 apiRouter.patch("/management/users/:id", requireManager, async (req, res) => {
   const parsed = z.object({ name: z.string().trim().min(2).max(160).optional(), email: z.string().trim().email().max(255).optional(), password: z.string().min(10).max(200).optional(), role: z.enum(["admin", "supervisor", "agent"]).optional(), active: z.boolean().optional() }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Dados do usuário inválidos." });
   if (String(req.params.id) === req.auth!.id && parsed.data.active === false) return res.status(400).json({ error: "Você não pode desativar seu próprio usuário." });
-  res.json({ ok: await updateUser(req.auth!.organizationId, String(req.params.id), parsed.data) });
+  try { res.json({ ok: await updateUser(req.auth!.organizationId, String(req.params.id), parsed.data, req.auth!.role) }); }
+  catch (error) { res.status(403).json({ error: error instanceof Error ? error.message : "Permissão insuficiente." }); }
 });
 apiRouter.get("/management/teams", async (req, res) => res.json({ items: await listTeams(req.auth!.organizationId) }));
 apiRouter.post("/management/teams", requireManager, async (req, res) => {
   const parsed = teamSchema.safeParse(req.body); if (!parsed.success) return res.status(400).json({ error: "Dados da equipe inválidos." });
-  res.status(201).json(await createTeam(req.auth!.organizationId, parsed.data));
+  res.status(201).json(await createTeam(req.auth!.organizationId, parsed.data, req.auth!.role));
 });
 apiRouter.put("/management/teams/:id", requireManager, async (req, res) => {
   const parsed = teamSchema.extend({ active: z.boolean() }).safeParse(req.body); if (!parsed.success) return res.status(400).json({ error: "Dados da equipe inválidos." });
-  res.json({ ok: await updateTeam(req.auth!.organizationId, String(req.params.id), parsed.data) });
+  res.json({ ok: await updateTeam(req.auth!.organizationId, String(req.params.id), parsed.data, req.auth!.role) });
 });
-apiRouter.get("/management/sla", async (req, res) => res.json(await getSlaPolicy(req.auth!.organizationId)));
+apiRouter.get("/management/sla", requireManager, async (req, res) => res.json(await getSlaPolicy(req.auth!.organizationId)));
 apiRouter.put("/management/sla", requireManager, async (req, res) => {
   const parsed = z.object({ firstResponseMinutes: z.number().int().min(1).max(10080), resolutionMinutes: z.number().int().min(1).max(43200) }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Política de SLA inválida." });

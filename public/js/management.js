@@ -14,9 +14,12 @@ function openDialog(id) { $(`#${id}`).showModal(); } function closeDialog(id) { 
 
 async function init() {
   state.me = (await api('/api/auth/me')).user; renderOwnProfile();
-  await Promise.all([loadDashboard(), loadTeams(), loadSla()]);
-  if (state.me.role !== 'agent') await loadUsers();
-  else { $('#new-user').classList.add('hidden'); $('#new-team').classList.add('hidden'); }
+  if (state.me.role === 'agent') {
+    document.querySelectorAll('.management-tab').forEach(button => button.classList.toggle('hidden', button.dataset.tab !== 'profile'));
+    activateManagementTab('profile'); history.replaceState(null, '', '#profile'); return;
+  }
+  if (state.me.role === 'supervisor') $('#user-role option[value="admin"]').remove();
+  await Promise.all([loadDashboard(), loadTeams(), loadSla(), loadUsers()]);
 }
 
 function renderOwnProfile() {
