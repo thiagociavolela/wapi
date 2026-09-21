@@ -5,7 +5,7 @@ const escapeHtml = value => { const node = document.createElement('div'); node.t
 const statusLabel = status => ({ draft: 'Rascunho', scheduled: 'Agendada', running: 'Em andamento', paused: 'Pausada', completed: 'Concluída', cancelled: 'Cancelada' })[status] || status;
 const dateTime = value => value ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : '—';
 function toast(message) { $('#toast').textContent = message; $('#toast').classList.remove('hidden'); setTimeout(() => $('#toast').classList.add('hidden'), 3500); }
-function showView(view) { $('#campaign-list-view').classList.toggle('hidden', view !== 'list'); $('#campaign-create-view').classList.toggle('hidden', view !== 'create'); document.querySelectorAll('.campaign-tab').forEach(item => item.classList.toggle('active', item.dataset.view === view)); $('#campaign-title').textContent = view === 'create' ? 'Criar campanha' : 'Campanhas'; }
+function showView(view) { $('#campaign-list-view').classList.toggle('hidden', view !== 'list'); $('#campaign-create-view').classList.toggle('hidden', view !== 'create'); document.querySelectorAll('.campaign-tab').forEach(item => item.classList.toggle('active', item.dataset.view === view)); $('#campaign-title').textContent = view === 'create' ? 'Criar campanha' : 'Campanhas'; $('#open-create').classList.toggle('hidden', view === 'create'); document.body.classList.toggle('creating-campaign', view === 'create'); }
 
 async function init() {
   state.me = (await api('/api/auth/me')).user; if (state.me.role === 'agent') return location.replace('/');
