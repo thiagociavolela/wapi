@@ -9,6 +9,8 @@ import { subscribe } from "../modules/realtime/events.js";
 import { isMetaConfigured } from "../config.js";
 import { listMessageTemplates } from "../modules/meta/client.js";
 import { createTeam, createUser, getDashboard, getIntegrationDashboard, getSlaPolicy, listManagedUsers, listTeams, updateSlaPolicy, updateTeam, updateUser } from "../modules/management/service.js";
+import { changeCampaignStatus, createCampaign, getCampaign, listCampaigns, parseCampaignContacts } from "../modules/campaigns/service.js";
+import { buildTemplateSnapshot } from "../modules/integrations/service.js";
 
 export const apiRouter = Router();
 const scheduledMessageSchema = z.discriminatedUnion("messageType", [
@@ -22,6 +24,7 @@ const mediaUpload = multer({
   limits: { fileSize: 20 * 1024 * 1024, files: 1 },
   fileFilter: (_req, file, callback) => callback(null, /^(image|audio|video)\//.test(file.mimetype) || ["application/pdf", "text/plain", "text/csv", "application/zip", "application/msword", "application/vnd.ms-excel", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.presentationml.presentation"].includes(file.mimetype))
 });
+const contactListUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1 } });
 apiRouter.use(requireAuth);
 
 apiRouter.get("/status", (_req, res) => res.json({ ok: true, metaConfigured: isMetaConfigured() }));
@@ -215,6 +218,40 @@ apiRouter.put("/management/sla", requireManager, async (req, res) => {
   const parsed = z.object({ firstResponseMinutes: z.number().int().min(1).max(10080), resolutionMinutes: z.number().int().min(1).max(43200) }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Política de SLA inválida." });
   await updateSlaPolicy(req.auth!.organizationId, parsed.data.firstResponseMinutes, parsed.data.resolutionMinutes); res.json({ ok: true });
+});
+apiRouter.get("/campaigns", requireManager, async (req, res) => res.json({ items: await listCampaigns(req.auth!.organizationId) }));
+apiRouter.get("/campaigns/:id", requireManager, async (req, res) => {
+  const item = await getCampaign(req.auth!.organizationId, String(req.params.id));
+  if (!item) return res.status(404).json({ error: "Campanha não encontrada." });
+  res.json(item);
+});
+apiRouter.post("/campaigns/import", requireManager, contactListUpload.single("file"), async (req, res) => {
+  if (!req.file || !/\.(csv|txt)$/i.test(req.file.originalname)) return res.status(400).json({ error: "Envie um arquivo CSV ou TXT de até 2 MB." });
+  res.json(parseCampaignContacts(req.file.buffer.toString("utf8"), req.file.originalname));
+});
+apiRouter.post("/campaigns", requireManager, async (req, res) => {
+  const parsed = z.object({
+    name: z.string().trim().min(2).max(160), description: z.string().trim().max(500).optional(),
+    templateName: z.string().trim().min(1).max(512), templateLanguage: z.string().trim().min(2).max(20),
+    parameters: z.array(z.string().max(1024)).max(30).default([]), delaySeconds: z.number().int().min(1).max(300),
+    scheduledFor: z.coerce.date().optional(), recipients: z.array(z.object({ phone: z.string().max(32), name: z.string().max(160).optional() })).min(1).max(5000),
+    saveContacts: z.boolean().default(false)
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Revise os dados, destinatários, template e intervalo da campanha." });
+  try {
+    const templates = (await listMessageTemplates()).data;
+    const template = templates.find((item) => item.status === "APPROVED" && item.name === parsed.data.templateName && item.language === parsed.data.templateLanguage);
+    if (!template) return res.status(422).json({ error: "Template não encontrado ou não aprovado pela Meta." });
+    const snapshot = buildTemplateSnapshot(template as any, parsed.data.parameters);
+    res.status(201).json(await createCampaign(req.auth!.organizationId, req.auth!.id, { ...parsed.data, templateComponents: snapshot.components, templatePreview: snapshot.text }));
+  } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Não foi possível criar a campanha." }); }
+});
+apiRouter.post("/campaigns/:id/:action", requireManager, async (req, res) => {
+  const action = z.enum(["pause", "resume", "cancel"]).safeParse(req.params.action);
+  if (!action.success) return res.status(400).json({ error: "Ação inválida." });
+  const ok = await changeCampaignStatus(req.auth!.organizationId, String(req.params.id), action.data);
+  if (!ok) return res.status(409).json({ error: "A campanha não permite esta ação agora." });
+  res.json({ ok: true });
 });
 apiRouter.get("/events", (req, res) => {
   res.set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });

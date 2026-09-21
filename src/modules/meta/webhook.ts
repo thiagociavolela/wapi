@@ -142,6 +142,13 @@ async function processStatus(organizationId: string, status: Json) {
     params.push(status.id, organizationId);
     await connection.execute(`UPDATE messages SET status = ?, error_code = ?, error_message = ?${dateAssignment}
       WHERE meta_message_id = ? AND organization_id = ?`, params);
+    const recipientDateColumn = statusName === "delivered" ? "delivered_at" : statusName === "read" ? "read_at" : null;
+    const recipientDateAssignment = recipientDateColumn ? `, ${recipientDateColumn} = FROM_UNIXTIME(?)` : "";
+    const recipientParams: any[] = [statusName, error?.message ?? error?.title ?? null];
+    if (recipientDateColumn) recipientParams.push(Number(status.timestamp) || Math.floor(Date.now() / 1000));
+    recipientParams.push(status.id, organizationId);
+    await connection.execute(`UPDATE campaign_recipients SET status = ?, error_message = ?${recipientDateAssignment}
+      WHERE meta_message_id = ? AND organization_id = ?`, recipientParams);
     await markEventProcessed(connection, eventKey);
     await connection.commit();
     publish(organizationId, { type: "status", messageId: status.id });

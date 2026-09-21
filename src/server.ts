@@ -9,6 +9,7 @@ import { pool } from "./database/pool.js";
 import { ensureInitialAdmin } from "./modules/auth/auth.js";
 import { startScheduledMessageWorker } from "./modules/conversations/scheduled.js";
 import { startIntegrationMessageWorker } from "./modules/integrations/service.js";
+import { startCampaignWorker } from "./modules/campaigns/service.js";
 import { apiRouter } from "./routes/api.js";
 import { authRouter } from "./routes/auth.js";
 import { integrationRouter } from "./routes/integrations.js";
@@ -39,6 +40,7 @@ async function start() {
   await ensureInitialAdmin();
   startScheduledMessageWorker();
   startIntegrationMessageWorker();
+  startCampaignWorker();
   app.listen(config.PORT, () => console.log(`Central disponível em ${config.APP_URL}`));
 }
 
