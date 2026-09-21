@@ -176,12 +176,23 @@ export async function enrichCatalogMessage(message: Json): Promise<Json> {
   const reference = message.context?.referred_product;
   const catalogId = reference?.catalog_id ?? message.order?.catalog_id;
   const retailerId = reference?.product_retailer_id;
-  if (!catalogId || !retailerId) return message;
-  try {
-    const product = await getCatalogProduct(String(catalogId), String(retailerId));
-    return product ? { ...message, catalog_product: product } : message;
-  } catch (error) {
-    console.warn("Não foi possível consultar o produto do catálogo da Meta:", error instanceof Error ? error.message : error);
-    return message;
+  if (!catalogId) return message;
+  if (retailerId) {
+    try {
+      const product = await getCatalogProduct(String(catalogId), String(retailerId));
+      return product ? { ...message, catalog_product: product } : message;
+    } catch (error) {
+      console.warn("Não foi possível consultar o produto do catálogo da Meta:", error instanceof Error ? error.message : error);
+      return message;
+    }
   }
+  const orderItems = Array.isArray(message.order?.product_items) ? message.order.product_items : [];
+  const retailerIds: string[] = [...new Set<string>(orderItems.map((item: Json) => item?.product_retailer_id).filter(Boolean).map(String))];
+  if (!retailerIds.length) return message;
+  const results = await Promise.allSettled(retailerIds.map((id) => getCatalogProduct(String(catalogId), id)));
+  const products = results.flatMap((result) => result.status === "fulfilled" && result.value ? [result.value] : []);
+  results.forEach((result, index) => {
+    if (result.status === "rejected") console.warn(`Não foi possível consultar o produto ${retailerIds[index]} do catálogo da Meta:`, result.reason instanceof Error ? result.reason.message : result.reason);
+  });
+  return products.length ? { ...message, catalog_products: products } : message;
 }

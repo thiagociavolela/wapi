@@ -28,10 +28,11 @@ function catalogPrice(product = {}) {
   return `${product.price}${product.currency ? ` ${product.currency}` : ''}`;
 }
 function catalogProductCard(product = {}, fallback = {}) {
-  const name = product.name || fallback.product_retailer_id || 'Produto do catálogo';
+  const retailerId = product.retailerId || product.retailer_id || fallback.product_retailer_id || '';
+  const name = product.name || 'Produto do catálogo';
   const price = catalogPrice(product);
   const imageUrl = safeImageUrl(product.imageUrl || product.image_url);
-  return `<div class="catalog-product-card"><div class="catalog-product-copy"><span>Produto do catálogo</span><strong>${escapeHtml(name)}</strong>${price ? `<b>${escapeHtml(price)}</b>` : ''}</div>${imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(name)}" loading="lazy">` : '<div class="catalog-product-placeholder" aria-hidden="true">▣</div>'}</div>`;
+  return `<div class="catalog-product-card"><div class="catalog-product-copy"><span>Produto do catálogo</span><strong>${escapeHtml(name)}</strong>${retailerId ? `<small>ID: ${escapeHtml(retailerId)}</small>` : ''}${price ? `<b>${escapeHtml(price)}</b>` : ''}</div>${imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(name)}" loading="lazy">` : '<div class="catalog-product-placeholder" aria-hidden="true">▣</div>'}</div>`;
 }
 function messageContent(item) {
   const url = `/api/messages/${encodeURIComponent(item.id)}/media`;
@@ -40,7 +41,8 @@ function messageContent(item) {
   if (referredProduct) return `${catalogProductCard(content.catalog_product, referredProduct)}${item.textBody ? `<p class="catalog-message-text">${escapeHtml(item.textBody)}</p>` : ''}`;
   if (item.type === 'order' && content.order) {
     const products = Array.isArray(content.order.product_items) ? content.order.product_items : [];
-    return `<div class="catalog-order"><span>Pedido do catálogo</span>${products.map(product => catalogProductCard({ retailerId: product.product_retailer_id, name: product.product_retailer_id, price: product.item_price != null ? Number(product.item_price) * 100 : undefined, currency: product.currency }, product)).join('')}</div>${content.order.text ? `<p class="catalog-message-text">${escapeHtml(content.order.text)}</p>` : ''}`;
+    const details = Array.isArray(content.catalog_products) ? content.catalog_products : [];
+    return `<div class="catalog-order"><span>Pedido do catálogo</span>${products.map(product => { const detail = details.find(item => String(item.retailerId || item.retailer_id) === String(product.product_retailer_id)) || {}; return catalogProductCard({ ...detail, retailerId: product.product_retailer_id, price: product.item_price != null ? Number(product.item_price) * 100 : detail.price, currency: product.currency || detail.currency }, product); }).join('')}</div>${content.order.text ? `<p class="catalog-message-text">${escapeHtml(content.order.text)}</p>` : ''}`;
   }
   if (item.type === 'template') {
     const buttons = Array.isArray(content.buttons) ? content.buttons : [];
