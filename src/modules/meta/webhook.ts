@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
+import { config } from "../../config.js";
 import { pool } from "../../database/pool.js";
 import { publish } from "../realtime/events.js";
 import { defaultOrganizationId } from "../conversations/service.js";
@@ -26,6 +27,11 @@ export async function processWebhook(payload: Json) {
   try {
     for (const change of changes) {
       const value = change.value ?? {};
+      const eventPhoneNumberId = value.metadata?.phone_number_id ? String(value.metadata.phone_number_id) : "";
+      if (!isWebhookForConfiguredPhone(value, config.META_PHONE_NUMBER_ID)) {
+        console.log("Webhook ignorado: número diferente da instalação.", JSON.stringify({ eventPhoneNumberId }));
+        continue;
+      }
       const profileByWaId = new Map<string, string | undefined>(
         (value.contacts ?? []).map((contact: Json) => [String(contact.wa_id), contact.profile?.name])
       );
@@ -50,6 +56,12 @@ export async function processWebhook(payload: Json) {
 export function extractChanges(payload: Json): Json[] {
   if (payload?.field && payload?.value) return [payload];
   return (payload?.entry ?? []).flatMap((entry: Json) => Array.isArray(entry?.changes) ? entry.changes : []);
+}
+
+export function isWebhookForConfiguredPhone(value: Json, configuredPhoneNumberId: string) {
+  const hasPhoneEvents = Array.isArray(value.messages) || Array.isArray(value.statuses);
+  if (!hasPhoneEvents || !configuredPhoneNumberId) return true;
+  return String(value.metadata?.phone_number_id ?? "") === configuredPhoneNumberId;
 }
 
 async function processInbound(organizationId: string, message: Json, profileName?: string) {
