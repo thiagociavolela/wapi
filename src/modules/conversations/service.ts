@@ -12,7 +12,7 @@ export async function defaultOrganizationId() {
   return String(rows[0].id);
 }
 
-export async function listConversations(organizationId: string, search = "", status?: "new" | "open" | "pending" | "resolved") {
+export async function listConversations(organizationId: string, search = "", status?: "new" | "open" | "pending" | "resolved", all = false) {
   const term = `%${search.trim()}%`;
   const [rows] = await pool.execute<RowDataPacket[]>(`
     SELECT c.id, c.status, c.priority, c.unread_count AS unreadCount,
@@ -28,7 +28,7 @@ export async function listConversations(organizationId: string, search = "", sta
     LEFT JOIN users u ON u.id = c.assigned_user_id
     LEFT JOIN teams t ON t.id = c.team_id
     WHERE c.organization_id = ? AND (? = '' OR c.status = ?) AND (? = '%%' OR ct.name LIKE ? OR ct.profile_name LIKE ? OR ct.phone LIKE ?)
-    ORDER BY c.last_message_at DESC, c.created_at DESC LIMIT 100`,
+    ORDER BY c.last_message_at DESC, c.created_at DESC ${all ? "" : "LIMIT 100"}`,
     [organizationId, status || "", status || "", term, term, term, term]
   );
   return rows;
@@ -44,6 +44,14 @@ export async function countConversations(organizationId: string, search = "") {
     WHERE c.organization_id = ? AND (? = '%%' OR ct.name LIKE ? OR ct.profile_name LIKE ? OR ct.phone LIKE ?)`,
     [organizationId, term, term, term, term]);
   return rows[0] || {};
+}
+
+export async function adminCanSendConversation(organizationId: string, userId: string, conversationId: string) {
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    "SELECT assigned_user_id AS assignedUserId FROM conversations WHERE id = ? AND organization_id = ? LIMIT 1",
+    [conversationId, organizationId]
+  );
+  return Boolean(rows[0]) && String(rows[0]?.assignedUserId || "") === userId;
 }
 
 export async function listContacts(organizationId: string, search = "", status?: "new" | "open" | "pending" | "resolved", page = 1, limit = 25) {
@@ -399,6 +407,44 @@ export async function markConversationUnread(organizationId: string, conversatio
   const [result] = await pool.execute<ResultSetHeader>("UPDATE conversations SET unread_count = GREATEST(unread_count, 1) WHERE id = ? AND organization_id = ?", [conversationId, organizationId]);
   if (result.affectedRows) publish(organizationId, { type: "conversation", conversationId });
   return result.affectedRows > 0;
+}
+
+export async function clearConversation(organizationId: string, conversationId: string, actorUserId: string) {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [rows] = await connection.execute<RowDataPacket[]>(
+      "SELECT id FROM conversations WHERE id = ? AND organization_id = ? FOR UPDATE", [conversationId, organizationId]
+    );
+    if (!rows.length) { await connection.rollback(); return false; }
+    await connection.execute("DELETE FROM integration_message_jobs WHERE conversation_id = ? AND organization_id = ?", [conversationId, organizationId]);
+    await connection.execute("DELETE FROM scheduled_messages WHERE conversation_id = ? AND organization_id = ?", [conversationId, organizationId]);
+    await connection.execute("DELETE FROM messages WHERE conversation_id = ? AND organization_id = ?", [conversationId, organizationId]);
+    await connection.execute("UPDATE conversations SET last_message_preview = NULL, last_message_at = NULL, unread_count = 0 WHERE id = ? AND organization_id = ?", [conversationId, organizationId]);
+    await connection.commit();
+  } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
+  await audit(organizationId, actorUserId, "conversation.cleared", "conversation", conversationId);
+  publish(organizationId, { type: "conversation", conversationId });
+  return true;
+}
+
+export async function deleteConversationContact(organizationId: string, conversationId: string, actorUserId: string) {
+  const connection = await pool.getConnection();
+  let contactId: string;
+  try {
+    await connection.beginTransaction();
+    const [rows] = await connection.execute<RowDataPacket[]>(
+      "SELECT contact_id AS contactId FROM conversations WHERE id = ? AND organization_id = ? FOR UPDATE", [conversationId, organizationId]
+    );
+    if (!rows[0]) { await connection.rollback(); return false; }
+    contactId = String(rows[0].contactId);
+    await connection.execute("DELETE FROM conversations WHERE id = ? AND organization_id = ?", [conversationId, organizationId]);
+    await connection.execute("DELETE FROM contacts WHERE id = ? AND organization_id = ?", [contactId, organizationId]);
+    await connection.commit();
+  } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
+  await audit(organizationId, actorUserId, "contact.deleted", "contact", contactId!);
+  publish(organizationId, { type: "conversation", conversationId });
+  return true;
 }
 
 export async function assignConversation(organizationId: string, conversationId: string, userId: string | null, actorUserId?: string) {

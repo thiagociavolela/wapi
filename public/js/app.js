@@ -17,6 +17,13 @@ function dayLabel(value) {
   return new Intl.DateTimeFormat('pt-BR', { timeZone: SYSTEM_TIME_ZONE, day: '2-digit', month: 'long', year: dayKey(date).slice(0, 4) === dayKey(today).slice(0, 4) ? undefined : 'numeric' }).format(date);
 }
 function windowOpen(item) { return item?.serviceWindowExpiresAt && new Date(item.serviceWindowExpiresAt) > new Date(); }
+function adminReadOnly() { return state.user?.role === 'admin' && state.active && state.active.assignedUserId !== state.user.id; }
+function renderAdminAccess() {
+  const readOnly = Boolean(adminReadOnly());
+  $('#admin-readonly').classList.toggle('hidden', !readOnly);
+  $('#composer').classList.toggle('hidden', readOnly);
+  $('#assign').querySelector('span').textContent = readOnly ? 'Assumir conversa' : state.active?.assignedUserName ? 'Reatribuir' : 'Assumir conversa';
+}
 function safeImageUrl(value) { try { const url = new URL(String(value)); return ['https:', 'http:'].includes(url.protocol) ? url.href : ''; } catch { return ''; } }
 function catalogPrice(product = {}) {
   if (product.formattedPrice) return String(product.formattedPrice);
@@ -83,7 +90,7 @@ async function loadConversations(preserve = true) {
   document.querySelectorAll('[data-count]').forEach(badge => { badge.textContent = Number(data.counts?.[badge.dataset.count] || 0); });
   state.conversations = data.items;
   renderConversations();
-  if (preserve && state.active) { state.active = state.conversations.find(item => item.id === state.active.id) || state.active; renderContactActivity(); }
+  if (preserve && state.active) { state.active = state.conversations.find(item => item.id === state.active.id) || state.active; renderContactActivity(); renderAdminAccess(); }
 }
 
 function renderConversations() {
@@ -106,10 +113,10 @@ async function openConversation(id) {
   $('#detail-phone').textContent = state.active.phone;
   $('#chat-avatar').textContent = $('#detail-avatar').textContent = initials(name);
   $('#detail-agent').textContent = state.active.assignedUserName || 'Não atribuído';
-  $('#assign').querySelector('span').textContent = state.active.assignedUserName ? 'Reatribuir' : 'Assumir conversa';
+  renderAdminAccess();
   $('#status').value = state.active.status;
   $('#team-select').value = state.active.teamId || ''; $('#priority-select').value = state.active.priority || 'normal';
-  renderContactActivity(); updateWindow(); await Promise.all([loadMessages(), loadNotes(), loadTags(), loadDetailScheduledMessages(), api(`/api/conversations/${id}/read`, { method: 'POST' })]);
+  renderContactActivity(); updateWindow(); await Promise.all([loadMessages(), loadNotes(), loadTags(), loadDetailScheduledMessages(), ...(adminReadOnly() ? [] : [api(`/api/conversations/${id}/read`, { method: 'POST' })])]);
   layoutConversation();
 }
 
@@ -125,22 +132,25 @@ function renderContactActivity() {
 
 function layoutConversation() {
   if (!state.active) return;
-  const chat = $('#chat'); const composer = $('#composer'); const alert = $('#composer-alert'); const messages = $('#message-list');
-  composer.hidden = false; composer.classList.remove('hidden');
+  const chat = $('#chat'); const composer = $('#composer'); const alert = $('#composer-alert'); const messages = $('#message-list'); const readonly = $('#admin-readonly');
+  const viewing = Boolean(adminReadOnly());
+  composer.classList.toggle('hidden', viewing);
   if (!state.recorder) composer.classList.remove('recording');
   const panelRect = chat.parentElement.getBoundingClientRect();
   chat.style.height = `${panelRect.height}px`;
-  Object.assign(composer.style, { position: 'fixed', left: `${panelRect.left + 22}px`, right: `${Math.max(innerWidth - panelRect.right + 22, 22)}px`, bottom: '18px', display: 'flex', visibility: 'visible' });
-  const reserved = composer.offsetHeight + 36 + (alert.classList.contains('hidden') ? 0 : alert.offsetHeight);
+  const position = { position: 'fixed', left: `${panelRect.left + 22}px`, right: `${Math.max(innerWidth - panelRect.right + 22, 22)}px`, bottom: '18px' };
+  Object.assign(composer.style, position, { display: viewing ? 'none' : 'flex', visibility: 'visible' });
+  Object.assign(readonly.style, position, { display: viewing ? 'flex' : 'none' });
+  const reserved = (viewing ? readonly.offsetHeight : composer.offsetHeight) + 36 + (viewing || alert.classList.contains('hidden') ? 0 : alert.offsetHeight);
   messages.style.bottom = `${Math.max(reserved, 100)}px`;
 }
 
 function updateWindow() {
   const open = windowOpen(state.active); const label = open ? `Janela aberta até ${dateTime(state.active.serviceWindowExpiresAt)}` : 'Janela encerrada · use um template';
-  $('#composer').classList.remove('hidden');
+  renderAdminAccess();
   $('#window-badge').textContent = open ? 'Janela aberta' : 'Janela encerrada'; $('#window-badge').className = `badge ${open ? 'success' : 'warning'}`;
   $('#detail-window').textContent = label; $('#message').disabled = !open; $('.send-button').disabled = !open;
-  $('#composer-alert').classList.toggle('hidden', open); $('#composer-alert').textContent = open ? '' : 'A resposta livre não está disponível. Selecione um template aprovado pela Meta.';
+  $('#composer-alert').classList.toggle('hidden', open || adminReadOnly()); $('#composer-alert').textContent = open ? '' : 'A resposta livre não está disponível. Selecione um template aprovado pela Meta.';
   requestAnimationFrame(layoutConversation);
 }
 
@@ -371,6 +381,24 @@ $('#conversation-actions').addEventListener('click', async event => {
   const button = event.target.closest('[data-conversation-action]'); const conversation = state.contextConversation; if (!button || !conversation) return;
   const action = button.dataset.conversationAction; closeConversationActions();
   try {
+    if (action === 'clear') {
+      if (state.user.role !== 'admin' || !confirm(`Limpar todas as mensagens da conversa com ${displayName(conversation)}? Esta ação não pode ser desfeita.`)) return;
+      await api(`/api/conversations/${conversation.id}/messages`, { method: 'DELETE' });
+      if (state.active?.id === conversation.id) {
+        state.active = { ...state.active, lastMessagePreview: null, lastMessageAt: null, unreadCount: 0 };
+        await loadMessages(); await loadDetailScheduledMessages();
+      }
+      await loadConversations(); toast('Conversa limpa.'); return;
+    }
+    if (action === 'delete-contact') {
+      if (state.user.role !== 'admin' || !confirm(`Excluir ${displayName(conversation)} e toda a conversa? Esta ação não pode ser desfeita.`)) return;
+      await api(`/api/conversations/${conversation.id}/contact`, { method: 'DELETE' });
+      if (state.active?.id === conversation.id) {
+        state.active = null; $('.app-shell').classList.remove('chat-open');
+        $('#chat').classList.add('hidden'); $('#details').classList.add('hidden'); $('#no-chat').classList.remove('hidden');
+      }
+      await loadConversations(false); toast('Contato excluído.'); return;
+    }
     if (action === 'unread') { await api(`/api/conversations/${conversation.id}/unread`, { method: 'POST' }); await loadConversations(false); toast('Conversa marcada como não lida.'); }
     if (action === 'schedule') await openScheduleDialog(conversation);
     if (action === 'transfer') { state.assignmentConversationId = conversation.id; $('#agent-select').value = conversation.assignedUserId || ''; openDialog('assign-dialog'); }
@@ -409,6 +437,7 @@ window.addEventListener('blur', closeConversationActions);
 $('#conversation-list').addEventListener('click', event => {
   const button = event.target.closest('[data-id]'); if (!button) return;
   const conversation = state.conversations.find(item => item.id === button.dataset.id);
+  if (state.user.role === 'admin') { openConversation(button.dataset.id); return; }
   if (conversation?.status === 'open' && conversation.assignedUserId && conversation.assignedUserId !== state.user.id) {
     $('#conversation-busy-agent').textContent = conversation.assignedUserName || 'outro atendente'; openDialog('conversation-busy-dialog'); return;
   }
@@ -530,7 +559,18 @@ function updateVoiceTime() { if (!state.recorder) return; const seconds = Math.f
 $('#cancel-voice').addEventListener('click', () => { if (state.recorder) { state.recorder.send = false; state.recorder.recorder.stop(); } });
 $('#send-voice').addEventListener('click', () => { if (state.recorder) { state.recorder.send = true; state.recorder.recorder.stop(); } });
 async function sendVoiceBlob(blob) { const form = new FormData(); form.append('file', blob, 'gravacao.webm'); toast('Enviando áudio…'); try { await api(`/api/conversations/${state.active.id}/voice`, { method: 'POST', body: form }); await Promise.all([loadMessages(), loadConversations()]); toast('Áudio enviado.'); } catch (error) { toast(error.message); } }
-$('#assign').addEventListener('click', () => { if (!state.active) return; state.assignmentConversationId = state.active.id; const assigned = state.users.find(user => user.name === state.active.assignedUserName); $('#agent-select').value = assigned?.id || state.user.id; openDialog('assign-dialog'); });
+async function assumeAdminConversation() {
+  if (!adminReadOnly()) return;
+  const id = state.active.id;
+  try {
+    await api(`/api/conversations/${id}/assign`, { method: 'POST', body: JSON.stringify({ userId: state.user.id }) });
+    await loadConversations();
+    await openConversation(id);
+    toast('Conversa assumida. Você já pode responder.');
+  } catch (error) { toast(error.message); }
+}
+$('#admin-assume').addEventListener('click', assumeAdminConversation);
+$('#assign').addEventListener('click', () => { if (!state.active) return; if (adminReadOnly()) return assumeAdminConversation(); state.assignmentConversationId = state.active.id; const assigned = state.users.find(user => user.name === state.active.assignedUserName); $('#agent-select').value = assigned?.id || state.user.id; openDialog('assign-dialog'); });
 $('#detail-assign-shortcut').addEventListener('click', () => $('#assign').click());
 $('#status').addEventListener('change', async event => { await api(`/api/conversations/${state.active.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: event.target.value }) }); await loadConversations(); });
 $('#team-select').addEventListener('change', async event => { await api(`/api/conversations/${state.active.id}/routing`, { method: 'PATCH', body: JSON.stringify({ teamId: event.target.value || null }) }); await loadConversations(); toast('Equipe atualizada.'); });

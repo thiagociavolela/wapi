@@ -2,7 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { requireAuth } from "../modules/auth/auth.js";
-import { addNote, assignConversation, changeStatus, countConversations, createContact, createQuickReply, getMessageMedia, getMessages, importContacts, listContacts, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, markConversationUnread, openConversationForAgent, reactToMessage, replaceTags, retryAgentMessage, sendAgentMedia, sendAgentTemplate, sendAgentText, signalAgentTyping, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
+import { addNote, adminCanSendConversation, assignConversation, changeStatus, clearConversation, countConversations, createContact, createQuickReply, deleteConversationContact, getMessageMedia, getMessages, importContacts, listContacts, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, markConversationUnread, openConversationForAgent, reactToMessage, replaceTags, retryAgentMessage, sendAgentMedia, sendAgentTemplate, sendAgentText, signalAgentTyping, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
 import { cancelScheduledMessage, createScheduledMessage, listScheduledMessages, updateScheduledMessage } from "../modules/conversations/scheduled.js";
 import { convertVoiceToOgg } from "../modules/conversations/audio.js";
 import { subscribe } from "../modules/realtime/events.js";
@@ -26,12 +26,16 @@ const mediaUpload = multer({
 });
 const contactListUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1 } });
 apiRouter.use(requireAuth);
+async function requireAdminAssignment(req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) {
+  if (req.auth!.role !== "admin" || await adminCanSendConversation(req.auth!.organizationId, req.auth!.id, String(req.params.id))) return next();
+  res.status(403).json({ error: "Assuma a conversa antes de enviar mensagens." });
+}
 
 apiRouter.get("/status", (_req, res) => res.json({ ok: true, metaConfigured: isMetaConfigured() }));
 apiRouter.get("/conversations", async (req, res) => {
   const status = z.enum(["new", "open", "pending", "resolved"]).optional().catch(undefined).parse(req.query.status || undefined);
   const search = String(req.query.search ?? "");
-  const [items, counts] = await Promise.all([listConversations(req.auth!.organizationId, search, status), countConversations(req.auth!.organizationId, search)]);
+  const [items, counts] = await Promise.all([listConversations(req.auth!.organizationId, search, status, req.auth!.role === "admin"), countConversations(req.auth!.organizationId, search)]);
   res.json({ items, counts });
 });
 apiRouter.get("/contacts", async (req, res) => {
@@ -68,8 +72,20 @@ apiRouter.post("/contacts/import", contactListUpload.single("file"), async (req,
 apiRouter.get("/conversations/:id/messages", async (req, res) => res.json(await getMessages(req.auth!.organizationId, String(req.params.id), req.query.before ? String(req.query.before) : undefined)));
 apiRouter.post("/conversations/:id/read", async (req, res) => res.json({ ok: await markConversationRead(req.auth!.organizationId, String(req.params.id)) }));
 apiRouter.post("/conversations/:id/unread", async (req, res) => res.json({ ok: await markConversationUnread(req.auth!.organizationId, String(req.params.id)) }));
+apiRouter.delete("/conversations/:id/messages", async (req, res) => {
+  if (req.auth!.role !== "admin") return res.status(403).json({ error: "Acesso exclusivo para administradores." });
+  const ok = await clearConversation(req.auth!.organizationId, String(req.params.id), req.auth!.id);
+  if (!ok) return res.status(404).json({ error: "Conversa não encontrada." });
+  res.json({ ok: true });
+});
+apiRouter.delete("/conversations/:id/contact", async (req, res) => {
+  if (req.auth!.role !== "admin") return res.status(403).json({ error: "Acesso exclusivo para administradores." });
+  const ok = await deleteConversationContact(req.auth!.organizationId, String(req.params.id), req.auth!.id);
+  if (!ok) return res.status(404).json({ error: "Contato não encontrado." });
+  res.json({ ok: true });
+});
 apiRouter.get("/conversations/:id/scheduled", async (req, res) => res.json({ items: await listScheduledMessages(req.auth!.organizationId, String(req.params.id)) }));
-apiRouter.post("/conversations/:id/scheduled", async (req, res) => {
+apiRouter.post("/conversations/:id/scheduled", requireAdminAssignment, async (req, res) => {
   const parsed = scheduledMessageSchema.safeParse(req.body);
   if (!parsed.success || parsed.data.scheduledFor.getTime() < Date.now() + 30000) return res.status(400).json({ error: "Escolha uma data futura e informe a mensagem." });
   try { res.status(201).json(await createScheduledMessage(req.auth!.organizationId, req.auth!.id, String(req.params.id), parsed.data)); }
@@ -119,7 +135,7 @@ apiRouter.patch("/conversations/:id/routing", async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: "Equipe ou prioridade inválida." });
   res.json({ ok: await updateConversationRouting(req.auth!.organizationId, req.auth!.id, String(req.params.id), parsed.data) });
 });
-apiRouter.post("/conversations/:id/messages", async (req, res) => {
+apiRouter.post("/conversations/:id/messages", requireAdminAssignment, async (req, res) => {
   const parsed = z.object({ text: z.string().trim().min(1).max(4096), clientId: z.string().uuid().optional(), replyToMessageId: z.string().uuid().optional() }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "A mensagem precisa ter entre 1 e 4096 caracteres." });
   try {
@@ -128,17 +144,17 @@ apiRouter.post("/conversations/:id/messages", async (req, res) => {
     res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar mensagem." });
   }
 });
-apiRouter.post("/conversations/:id/typing", async (req, res) => {
+apiRouter.post("/conversations/:id/typing", requireAdminAssignment, async (req, res) => {
   try { res.json(await signalAgentTyping(req.auth!.organizationId, String(req.params.id))); }
   catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao sinalizar digitação." }); }
 });
-apiRouter.post("/conversations/:id/messages/:messageId/reaction", async (req, res) => {
+apiRouter.post("/conversations/:id/messages/:messageId/reaction", requireAdminAssignment, async (req, res) => {
   const parsed = z.object({ emoji: z.string().max(32) }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Reação inválida." });
   try { res.json(await reactToMessage(req.auth!.organizationId, req.auth!.id, String(req.params.id), String(req.params.messageId), parsed.data.emoji)); }
   catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao reagir." }); }
 });
-apiRouter.post("/conversations/:id/media", mediaUpload.single("file"), async (req, res) => {
+apiRouter.post("/conversations/:id/media", requireAdminAssignment, mediaUpload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Selecione um arquivo válido de até 20 MB." });
   const caption = typeof req.body.caption === "string" ? req.body.caption.trim().slice(0, 1024) : undefined;
   try {
@@ -147,7 +163,7 @@ apiRouter.post("/conversations/:id/media", mediaUpload.single("file"), async (re
     }));
   } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar mídia." }); }
 });
-apiRouter.post("/conversations/:id/voice", mediaUpload.single("file"), async (req, res) => {
+apiRouter.post("/conversations/:id/voice", requireAdminAssignment, mediaUpload.single("file"), async (req, res) => {
   if (!req.file || !req.file.mimetype.startsWith("audio/")) return res.status(400).json({ error: "Gravação de áudio inválida." });
   try {
     const buffer = await convertVoiceToOgg(req.file.buffer);
@@ -155,7 +171,7 @@ apiRouter.post("/conversations/:id/voice", mediaUpload.single("file"), async (re
     res.status(201).json(await sendAgentMedia(req.auth!.organizationId, req.auth!.id, String(req.params.id), { buffer, mimeType: "audio/ogg", fileName: "gravacao.ogg" }));
   } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar áudio." }); }
 });
-apiRouter.post("/conversations/:id/messages/:messageId/retry", async (req, res) => {
+apiRouter.post("/conversations/:id/messages/:messageId/retry", requireAdminAssignment, async (req, res) => {
   try { res.json(await retryAgentMessage(req.auth!.organizationId, req.auth!.id, String(req.params.id), String(req.params.messageId))); }
   catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao reenviar mensagem." }); }
 });
@@ -166,7 +182,7 @@ apiRouter.get("/messages/:id/media", async (req, res) => {
     res.send(media.buffer);
   } catch (error) { res.status(404).json({ error: error instanceof Error ? error.message : "Mídia não encontrada." }); }
 });
-apiRouter.post("/conversations/:id/templates", async (req, res) => {
+apiRouter.post("/conversations/:id/templates", requireAdminAssignment, async (req, res) => {
   const parsed = z.object({
     name: z.string().trim().min(1).max(512).regex(/^[a-z0-9_]+$/),
     language: z.string().trim().min(2).max(20).default("pt_BR"),

@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "../../database/pool.js";
 import { publish } from "../realtime/events.js";
-import { sendAgentTemplate, sendAgentText } from "./service.js";
+import { adminCanSendConversation, sendAgentTemplate, sendAgentText } from "./service.js";
 
 type ScheduledInput = { body: string; scheduledFor: Date; messageType: "text" | "template"; templateName?: string; templateLanguage?: string; templateComponents?: unknown[] };
 
@@ -59,6 +59,10 @@ async function processDueMessages() {
       const [claim] = await pool.execute<ResultSetHeader>("UPDATE scheduled_messages SET status = 'processing' WHERE id = ? AND status = 'pending'", [item.id]);
       if (!claim.affectedRows) continue;
       try {
+        const [authors] = await pool.execute<RowDataPacket[]>("SELECT role FROM users WHERE id = ? AND organization_id = ? LIMIT 1", [item.userId, item.organizationId]);
+        if (authors[0]?.role === "admin" && !await adminCanSendConversation(String(item.organizationId), String(item.userId), String(item.conversationId))) {
+          throw new Error("O administrador precisa assumir a conversa antes do envio agendado.");
+        }
         const sent = item.messageType === "template"
           ? await sendAgentTemplate(String(item.organizationId), String(item.userId), String(item.conversationId), String(item.templateName), String(item.templateLanguage),
               typeof item.templateComponents === "string" ? JSON.parse(item.templateComponents) : (item.templateComponents || []))
