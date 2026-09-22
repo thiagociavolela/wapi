@@ -94,13 +94,15 @@ async function loadConversations(preserve = true) {
 }
 
 function renderConversations() {
-  $('#conversation-list').innerHTML = state.conversations.length ? state.conversations.map(item => `
-    <button class="conversation ${state.active?.id === item.id ? 'active' : ''}" data-id="${item.id}">
+  const list = $('#conversation-list'); const scrollTop = list.scrollTop;
+  const html = state.conversations.length ? state.conversations.map(item => `
+    <button class="conversation ${state.active?.id === item.id ? 'active' : ''}" data-render-key="conversation:${item.id}" data-id="${item.id}">
       <span class="avatar">${escapeHtml(initials(displayName(item)))}</span><span class="conversation-copy">
         <span class="conversation-top"><strong>${escapeHtml(displayName(item))}</strong><time>${time(item.lastMessageAt)}</time></span>
         <span class="conversation-bottom"><span><i class="status-dot ${escapeHtml(item.status)}"></i>${escapeHtml(item.lastMessagePreview || 'Nova conversa')}</span>${item.unreadCount ? `<b>${item.unreadCount}</b>` : ''}</span>
       </span>
-    </button>`).join('') : '<div class="empty">Nenhuma conversa encontrada.</div>';
+    </button>`).join('') : '<div class="empty" data-render-key="empty">Nenhuma conversa encontrada.</div>';
+  reconcileList(list, html); list.scrollTop = scrollTop;
 }
 
 async function openConversation(id) {
@@ -154,30 +156,61 @@ function updateWindow() {
   requestAnimationFrame(layoutConversation);
 }
 
+let messageLoadVersion = 0;
 async function loadMessages() {
-  const data = await api(`/api/conversations/${state.active.id}/messages`);
+  const conversationId = state.active?.id;
+  if (!conversationId) return;
+  const version = ++messageLoadVersion;
+  const data = await api(`/api/conversations/${conversationId}/messages`);
+  if (state.active?.id !== conversationId || version !== messageLoadVersion) return;
   state.messages = data.items;
   renderMessages();
 }
 
+function reconcileList(container, html) {
+  const template = document.createElement('template'); template.innerHTML = html;
+  const existing = new Map([...container.children].map(node => [node.dataset.renderKey, node]));
+  let cursor = container.firstElementChild; let changed = false;
+  for (const desired of [...template.content.children]) {
+    let node = existing.get(desired.dataset.renderKey);
+    if (!node || node.outerHTML !== desired.outerHTML) {
+      if (node) { if (node === cursor) cursor = desired; node.replaceWith(desired); }
+      node = desired; changed = true;
+    }
+    if (node !== cursor) { container.insertBefore(node, cursor); changed = true; }
+    cursor = node.nextElementSibling;
+  }
+  while (cursor) { const next = cursor.nextElementSibling; cursor.remove(); cursor = next; changed = true; }
+  return changed;
+}
+
+let renderedConversationId = null;
+
 function renderMessages() {
   if (!state.active) return;
+  const list = $('#message-list');
+  const conversationChanged = renderedConversationId !== state.active.id;
+  if (conversationChanged) { list.replaceChildren(); renderedConversationId = state.active.id; }
+  const nearBottom = conversationChanged || list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+  const previousScrollTop = list.scrollTop;
   const serverIds = new Set(state.messages.map(item => item.id));
   const pending = state.pendingMessages.filter(item => item.conversationId === state.active.id && !serverIds.has(item.id));
   const items = [...state.messages, ...pending].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
   let previousDay = ''; let previousDirection = '';
-  $('#message-list').innerHTML = items.length ? items.map(item => {
+  const html = items.length ? items.map(item => {
     const currentDay = dayKey(item.createdAt);
-    const separator = currentDay !== previousDay ? `<div class="message-day"><span>${dayLabel(item.createdAt)}</span></div>` : '';
+    const separator = currentDay !== previousDay ? `<div class="message-day" data-render-key="day:${currentDay}"><span>${dayLabel(item.createdAt)}</span></div>` : '';
     const grouped = currentDay === previousDay && item.direction === previousDirection;
     previousDay = currentDay; previousDirection = item.direction;
-    return `${separator}<div class="message-row ${item.direction} ${grouped ? 'same-author' : 'new-author'}" data-message-id="${item.id}">${item.status === 'failed' && item.direction === 'outbound' ? `<button type="button" class="message-retry" data-retry-id="${item.id}" title="${escapeHtml(item.errorMessage || 'Falha no envio. Clique para reenviar.')}" aria-label="Reenviar mensagem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg></button>` : ''}<article class="bubble">
+    return `${separator}<div class="message-row ${item.direction} ${grouped ? 'same-author' : 'new-author'}" data-render-key="message:${item.id}" data-message-id="${item.id}">${item.status === 'failed' && item.direction === 'outbound' ? `<button type="button" class="message-retry" data-retry-id="${item.id}" title="${escapeHtml(item.errorMessage || 'Falha no envio. Clique para reenviar.')}" aria-label="Reenviar mensagem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg></button>` : ''}<article class="bubble">
       ${replyContent(item)}${messageOrigin(item)}${item.senderName ? `<small>${escapeHtml(item.senderName)}</small>` : ''}${messageContent(item)}
       <footer><time>${time(item.createdAt)}</time>${item.direction === 'outbound' ? `<span class="message-status ${item.status}" title="${escapeHtml(item.errorMessage || statusLabel(item))}">${statusIcon(item.status)}</span>` : ''}</footer>
       ${reactionContent(item)}</article><button type="button" class="message-more" data-open-actions="${item.id}" aria-label="Ações da mensagem">⌄</button></div>`;
-  }).join('') : '<div class="empty">Ainda não há mensagens.</div>';
-  $('#message-list').scrollTop = $('#message-list').scrollHeight;
-  requestAnimationFrame(layoutConversation);
+  }).join('') : '<div class="empty" data-render-key="empty">Ainda não há mensagens.</div>';
+  if (reconcileList(list, html)) {
+    list.scrollTop = nearBottom ? list.scrollHeight : previousScrollTop;
+    requestAnimationFrame(layoutConversation);
+  }
 }
 
 function statusIcon(status) { return status === 'queued' ? '◷' : status === 'read' ? '✓✓' : status === 'delivered' ? '✓✓' : status === 'failed' ? '!' : '✓'; }
