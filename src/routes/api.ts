@@ -34,8 +34,9 @@ async function requireAdminAssignment(req: import("express").Request, res: impor
 apiRouter.get("/status", (_req, res) => res.json({ ok: true, metaConfigured: isMetaConfigured() }));
 apiRouter.get("/conversations", async (req, res) => {
   const status = z.enum(["new", "open", "pending", "resolved"]).optional().catch(undefined).parse(req.query.status || undefined);
+  const mine = req.query.mine === "true";
   const search = String(req.query.search ?? "");
-  const [items, counts] = await Promise.all([listConversations(req.auth!.organizationId, search, status, req.auth!.role !== "agent"), countConversations(req.auth!.organizationId, search)]);
+  const [items, counts] = await Promise.all([listConversations(req.auth!.organizationId, search, status, req.auth!.role !== "agent", mine ? req.auth!.id : undefined), countConversations(req.auth!.organizationId, search, req.auth!.id)]);
   res.json({ items, counts });
 });
 apiRouter.get("/contacts", async (req, res) => {

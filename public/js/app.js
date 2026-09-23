@@ -2,7 +2,7 @@ import { api } from './api.js';
 
 const $ = (selector) => document.querySelector(selector);
 const SYSTEM_TIME_ZONE = 'America/Sao_Paulo';
-const state = { user: null, users: [], teams: [], quickReplies: [], quickReplyMatches: [], quickReplyIndex: -1, templates: [], tags: [], contacts: [], conversations: [], messages: [], scheduledMessages: [], pendingMessages: [], pastedFiles: [], pastedFileIndex: 0, pasteObjectUrls: [], active: null, status: 'new', contactStatus: '', contactPage: 1, contactPages: 1, contactTotal: 0, searchTimer: null, contactSearchTimer: null, replyTo: null, actionMessage: null, contextConversation: null, assignmentConversationId: null, scheduleConversationId: null, scheduleEditingId: null, emojiMode: 'insert', recorder: null, typingTimer: null, pendingOpenConversationId: null, soundEnabled: localStorage.getItem('chat.notificationSound') !== 'off', notificationAudio: null };
+const state = { user: null, users: [], teams: [], quickReplies: [], quickReplyMatches: [], quickReplyIndex: -1, templates: [], tags: [], contacts: [], conversations: [], messages: [], messagesHasMore: false, historySearchTerm: '', historySearchMatches: [], historySearchIndex: -1, scheduledMessages: [], pendingMessages: [], pastedFiles: [], pastedFileIndex: 0, pasteObjectUrls: [], active: null, status: 'new', assignedToMe: false, contactStatus: '', contactPage: 1, contactPages: 1, contactTotal: 0, searchTimer: null, contactSearchTimer: null, replyTo: null, actionMessage: null, contextConversation: null, assignmentConversationId: null, scheduleConversationId: null, scheduleEditingId: null, emojiMode: 'insert', recorder: null, typingTimer: null, pendingOpenConversationId: null, soundEnabled: localStorage.getItem('chat.notificationSound') !== 'off', notificationAudio: null };
 
 function escapeHtml(value = '') { const node = document.createElement('div'); node.textContent = String(value); return node.innerHTML; }
 function initials(name = '?') { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase(); }
@@ -77,14 +77,14 @@ async function init() {
   renderAgentOptions(); renderTeamOptions(); renderQuickReplies(); await loadConversations();
   const requestedConversation = new URLSearchParams(location.search).get('conversation');
   if (requestedConversation) {
-    state.status = ''; document.querySelectorAll('.filter').forEach(item => item.classList.toggle('active', item.dataset.status === ''));
+    state.status = ''; state.assignedToMe = false; document.querySelectorAll('.filter').forEach(item => item.classList.toggle('active', item.dataset.status === '' && !item.dataset.assigned));
     await loadConversations(); if (state.conversations.some(item => item.id === requestedConversation)) await openConversation(requestedConversation);
   }
   connectEvents();
 }
 
 async function loadConversations(preserve = true) {
-  const data = await api(`/api/conversations?search=${encodeURIComponent($('#search').value)}&status=${encodeURIComponent(state.status)}`);
+  const data = await api(`/api/conversations?search=${encodeURIComponent($('#search').value)}&status=${encodeURIComponent(state.status)}&mine=${state.assignedToMe}`);
   $('#total-count').textContent = Number(data.counts?.total || 0);
   $('#unread-count').textContent = Number(data.counts?.unreadCount || 0);
   document.querySelectorAll('[data-count]').forEach(badge => { badge.textContent = Number(data.counts?.[badge.dataset.count] || 0); });
@@ -107,6 +107,7 @@ function renderConversations() {
 }
 
 async function openConversation(id) {
+  closeConversationSearch();
   state.active = state.conversations.find(item => item.id === id);
   if (!state.active) return;
   $('.app-shell').classList.add('chat-open');
@@ -165,6 +166,20 @@ async function loadMessages() {
   const data = await api(`/api/conversations/${conversationId}/messages`);
   if (state.active?.id !== conversationId || version !== messageLoadVersion) return;
   state.messages = data.items;
+  state.messagesHasMore = Boolean(data.hasMore);
+  if (state.historySearchTerm) await loadAllMessagesForSearch(); else renderMessages();
+}
+
+async function loadAllMessagesForSearch() {
+  const conversationId = state.active?.id;
+  while (conversationId && state.active?.id === conversationId && state.messagesHasMore && state.messages.length) {
+    const before = state.messages[0].createdAt;
+    const data = await api(`/api/conversations/${conversationId}/messages?before=${encodeURIComponent(before)}`);
+    if (state.active?.id !== conversationId) return;
+    const known = new Set(state.messages.map(item => item.id));
+    state.messages = [...data.items.filter(item => !known.has(item.id)), ...state.messages];
+    state.messagesHasMore = Boolean(data.hasMore);
+  }
   renderMessages();
 }
 
@@ -212,7 +227,57 @@ function renderMessages() {
     list.scrollTop = nearBottom ? list.scrollHeight : previousScrollTop;
     requestAnimationFrame(layoutConversation);
   }
+  applyConversationSearchHighlights();
 }
+
+function applyConversationSearchHighlights() {
+  const list = $('#message-list');
+  list.querySelectorAll('mark.history-search-mark').forEach(mark => mark.replaceWith(document.createTextNode(mark.textContent || '')));
+  list.normalize(); state.historySearchMatches = [];
+  const term = state.historySearchTerm.trim();
+  if (!term) return updateConversationSearchCount();
+  const expression = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+  list.querySelectorAll('[data-message-id]').forEach(row => {
+    if (!row.textContent.toLocaleLowerCase('pt-BR').includes(term.toLocaleLowerCase('pt-BR'))) return;
+    state.historySearchMatches.push(row.dataset.messageId);
+    const walker = document.createTreeWalker(row.querySelector('.bubble'), NodeFilter.SHOW_TEXT);
+    const nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach(node => {
+      expression.lastIndex = 0;
+      if (!expression.test(node.data)) return;
+      expression.lastIndex = 0; const fragment = document.createDocumentFragment(); let cursor = 0;
+      node.data.replace(expression, (match, offset) => { fragment.append(node.data.slice(cursor, offset)); const mark = document.createElement('mark'); mark.className = 'history-search-mark'; mark.textContent = match; fragment.append(mark); cursor = offset + match.length; return match; });
+      fragment.append(node.data.slice(cursor)); node.replaceWith(fragment);
+    });
+  });
+  if (state.historySearchMatches.length && (state.historySearchIndex < 0 || state.historySearchIndex >= state.historySearchMatches.length)) state.historySearchIndex = 0;
+  updateConversationSearchCount();
+}
+
+function updateConversationSearchCount() {
+  const total = state.historySearchMatches.length; const count = $('#conversation-search-count');
+  count.textContent = state.historySearchTerm.trim() ? (total ? `${state.historySearchIndex + 1} de ${total}` : 'Nenhum resultado') : 'Digite para pesquisar';
+  $('#conversation-search-previous').disabled = !total; $('#conversation-search-next').disabled = !total;
+  document.querySelectorAll('.history-search-current').forEach(row => row.classList.remove('history-search-current'));
+  if (!total) return;
+  const row = document.querySelector(`[data-message-id="${CSS.escape(state.historySearchMatches[state.historySearchIndex])}"]`);
+  row?.classList.add('history-search-current'); row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function runConversationSearch() {
+  state.historySearchTerm = $('#conversation-search-input').value.trim(); state.historySearchIndex = -1;
+  if (state.historySearchTerm) { $('#conversation-search-count').textContent = 'Pesquisando…'; await loadAllMessagesForSearch(); }
+  else applyConversationSearchHighlights();
+}
+function moveConversationSearch(step) { const total = state.historySearchMatches.length; if (!total) return; state.historySearchIndex = (state.historySearchIndex + step + total) % total; updateConversationSearchCount(); }
+function closeConversationSearch() { const panel = $('#conversation-search'); if (!panel) return; panel.classList.add('hidden'); $('#conversation-search-button')?.setAttribute('aria-expanded', 'false'); state.historySearchTerm = ''; state.historySearchMatches = []; state.historySearchIndex = -1; if ($('#conversation-search-input')) $('#conversation-search-input').value = ''; if ($('#message-list')) applyConversationSearchHighlights(); }
+
+$('#conversation-search-button').addEventListener('click', () => { const panel = $('#conversation-search'); const opening = panel.classList.contains('hidden'); if (!opening) return closeConversationSearch(); panel.classList.remove('hidden'); $('#conversation-search-button').setAttribute('aria-expanded', 'true'); $('#conversation-search-input').focus(); });
+$('#conversation-search').addEventListener('submit', event => { event.preventDefault(); void runConversationSearch(); });
+$('#conversation-search-input').addEventListener('search', () => void runConversationSearch());
+$('#conversation-search-previous').addEventListener('click', () => moveConversationSearch(-1));
+$('#conversation-search-next').addEventListener('click', () => moveConversationSearch(1));
+$('#conversation-search-close').addEventListener('click', closeConversationSearch);
 
 function statusIcon(status) { return status === 'queued' ? '◷' : status === 'read' ? '✓✓' : status === 'delivered' ? '✓✓' : status === 'failed' ? '!' : '✓'; }
 function statusLabel(item) { if (item.status === 'queued') { const content = typeof item.content === 'string' ? JSON.parse(item.content || '{}') : (item.content || {}); if (content.scheduledFor && new Date(content.scheduledFor) > new Date()) return `Agendada para ${dateTime(content.scheduledFor)}`; } return ({ queued: 'Enviando…', sent: 'Enviada', delivered: 'Entregue', read: 'Lida', failed: 'Falha no envio' })[item.status] || item.status; }
@@ -488,7 +553,7 @@ $('#confirm-conversation-open').addEventListener('click', async () => {
   const button = $('#confirm-conversation-open'); button.disabled = true; $('#conversation-open-error').textContent = '';
   try {
     await api(`/api/conversations/${id}/open`, { method: 'POST' });
-    closeDialog('conversation-open-dialog'); state.pendingOpenConversationId = null; state.status = 'open';
+    closeDialog('conversation-open-dialog'); state.pendingOpenConversationId = null; state.status = 'open'; state.assignedToMe = false;
     document.querySelectorAll('.filter').forEach(item => item.classList.toggle('active', item.dataset.status === 'open'));
     await loadConversations(false); await openConversation(id); toast('Conversa movida para Em atendimento.');
   } catch (error) {
@@ -500,7 +565,7 @@ $('#confirm-conversation-open').addEventListener('click', async () => {
 $('#search').addEventListener('input', () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(() => loadConversations(false), 300); });
 document.addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); $('#search').focus(); $('#search').select(); } });
 document.querySelectorAll('.filter').forEach(button => button.addEventListener('click', async () => {
-  document.querySelectorAll('.filter').forEach(x => x.classList.remove('active')); button.classList.add('active'); state.status = button.dataset.status;
+  document.querySelectorAll('.filter').forEach(x => x.classList.remove('active')); button.classList.add('active'); state.status = button.dataset.status; state.assignedToMe = button.dataset.assigned === 'me';
   await loadConversations(false);
   if (state.active) { updateWindow(); renderConversations(); layoutConversation(); }
 }));

@@ -12,7 +12,7 @@ export async function defaultOrganizationId() {
   return String(rows[0].id);
 }
 
-export async function listConversations(organizationId: string, search = "", status?: "new" | "open" | "pending" | "resolved", all = false) {
+export async function listConversations(organizationId: string, search = "", status?: "new" | "open" | "pending" | "resolved", all = false, assignedUserId?: string) {
   const term = `%${search.trim()}%`;
   const [rows] = await pool.execute<RowDataPacket[]>(`
     SELECT c.id, c.status, c.priority, c.unread_count AS unreadCount,
@@ -27,22 +27,23 @@ export async function listConversations(organizationId: string, search = "", sta
     JOIN contacts ct ON ct.id = c.contact_id
     LEFT JOIN users u ON u.id = c.assigned_user_id
     LEFT JOIN teams t ON t.id = c.team_id
-    WHERE c.organization_id = ? AND (? = '' OR c.status = ?) AND (? = '%%' OR ct.name LIKE ? OR ct.profile_name LIKE ? OR ct.phone LIKE ?)
+    WHERE c.organization_id = ? AND (? = '' OR c.status = ?) AND (? IS NULL OR c.assigned_user_id = ?) AND (? = '%%' OR ct.name LIKE ? OR ct.profile_name LIKE ? OR ct.phone LIKE ?)
     ORDER BY c.last_message_at DESC, c.created_at DESC ${all ? "" : "LIMIT 100"}`,
-    [organizationId, status || "", status || "", term, term, term, term]
+    [organizationId, status || "", status || "", assignedUserId ?? null, assignedUserId ?? null, term, term, term, term]
   );
   return rows;
 }
 
-export async function countConversations(organizationId: string, search = "") {
+export async function countConversations(organizationId: string, search = "", userId?: string) {
   const term = `%${search.trim()}%`;
   const [rows] = await pool.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total,
     SUM(c.status = 'new') AS newCount, SUM(c.status = 'open') AS openCount,
     SUM(c.status = 'pending') AS pendingCount, SUM(c.status = 'resolved') AS resolvedCount,
+    SUM(c.assigned_user_id = ?) AS mineCount,
     COALESCE(SUM(c.unread_count), 0) AS unreadCount
     FROM conversations c JOIN contacts ct ON ct.id = c.contact_id
     WHERE c.organization_id = ? AND (? = '%%' OR ct.name LIKE ? OR ct.profile_name LIKE ? OR ct.phone LIKE ?)`,
-    [organizationId, term, term, term, term]);
+    [userId ?? "", organizationId, term, term, term, term]);
   return rows[0] || {};
 }
 
