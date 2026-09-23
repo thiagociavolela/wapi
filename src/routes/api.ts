@@ -27,7 +27,7 @@ const mediaUpload = multer({
 const contactListUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1 } });
 apiRouter.use(requireAuth);
 async function requireAdminAssignment(req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) {
-  if (req.auth!.role !== "admin" || await adminCanSendConversation(req.auth!.organizationId, req.auth!.id, String(req.params.id))) return next();
+  if (!["admin", "supervisor"].includes(req.auth!.role) || await adminCanSendConversation(req.auth!.organizationId, req.auth!.id, String(req.params.id))) return next();
   res.status(403).json({ error: "Assuma a conversa antes de enviar mensagens." });
 }
 
@@ -35,7 +35,7 @@ apiRouter.get("/status", (_req, res) => res.json({ ok: true, metaConfigured: isM
 apiRouter.get("/conversations", async (req, res) => {
   const status = z.enum(["new", "open", "pending", "resolved"]).optional().catch(undefined).parse(req.query.status || undefined);
   const search = String(req.query.search ?? "");
-  const [items, counts] = await Promise.all([listConversations(req.auth!.organizationId, search, status, req.auth!.role === "admin"), countConversations(req.auth!.organizationId, search)]);
+  const [items, counts] = await Promise.all([listConversations(req.auth!.organizationId, search, status, req.auth!.role !== "agent"), countConversations(req.auth!.organizationId, search)]);
   res.json({ items, counts });
 });
 apiRouter.get("/contacts", async (req, res) => {

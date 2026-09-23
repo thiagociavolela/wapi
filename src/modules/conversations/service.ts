@@ -222,11 +222,12 @@ export async function reactToMessage(organizationId: string, userId: string, con
 }
 
 export async function sendAgentTemplate(organizationId: string, userId: string, conversationId: string, name: string, language: string, components: unknown[]) {
-  const [rows] = await pool.execute<RowDataPacket[]>(`SELECT ct.wa_id AS waId
+  const [rows] = await pool.execute<RowDataPacket[]>(`SELECT ct.wa_id AS waId, COALESCE(ct.name, ct.profile_name, ct.phone) AS contactName
     FROM conversations c JOIN contacts ct ON ct.id = c.contact_id
     WHERE c.id = ? AND c.organization_id = ? LIMIT 1`, [conversationId, organizationId]);
   const conversation = rows[0];
   if (!conversation) throw new Error("Conversa não encontrada.");
+  components = fillContactNameTemplateParameter(components, String(conversation.contactName));
   const id = crypto.randomUUID();
   const preview = `Template: ${name}`;
   await pool.execute(`INSERT INTO messages
@@ -243,6 +244,19 @@ export async function sendAgentTemplate(organizationId: string, userId: string, 
     throw error;
   } finally { publish(organizationId, { type: "message", conversationId }); }
   return { id };
+}
+
+export function fillContactNameTemplateParameter(components: unknown[], contactName: string) {
+  return components.map((component) => {
+    if (!component || typeof component !== "object") return component;
+    const value = component as Record<string, unknown>;
+    if (!Array.isArray(value.parameters)) return component;
+    return { ...value, parameters: value.parameters.map((parameter) => {
+      if (!parameter || typeof parameter !== "object") return parameter;
+      const item = parameter as Record<string, unknown>;
+      return String(item.parameter_name ?? "").toLowerCase() === "nome" ? { ...item, text: contactName } : parameter;
+    }) };
+  });
 }
 
 export async function sendAgentMedia(organizationId: string, userId: string, conversationId: string, input: {

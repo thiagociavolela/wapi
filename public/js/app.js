@@ -17,7 +17,7 @@ function dayLabel(value) {
   return new Intl.DateTimeFormat('pt-BR', { timeZone: SYSTEM_TIME_ZONE, day: '2-digit', month: 'long', year: dayKey(date).slice(0, 4) === dayKey(today).slice(0, 4) ? undefined : 'numeric' }).format(date);
 }
 function windowOpen(item) { return item?.serviceWindowExpiresAt && new Date(item.serviceWindowExpiresAt) > new Date(); }
-function adminReadOnly() { return state.user?.role === 'admin' && state.active && state.active.assignedUserId !== state.user.id; }
+function adminReadOnly() { return ['admin', 'supervisor'].includes(state.user?.role) && state.active && state.active.assignedUserId !== state.user.id; }
 function renderAdminAccess() {
   const readOnly = Boolean(adminReadOnly());
   $('#admin-readonly').classList.toggle('hidden', !readOnly);
@@ -99,6 +99,7 @@ function renderConversations() {
     <button class="conversation ${state.active?.id === item.id ? 'active' : ''}" data-render-key="conversation:${item.id}" data-id="${item.id}">
       <span class="avatar">${escapeHtml(initials(displayName(item)))}</span><span class="conversation-copy">
         <span class="conversation-top"><strong>${escapeHtml(displayName(item))}</strong><time>${time(item.lastMessageAt)}</time></span>
+        ${item.status === 'open' && item.assignedUserName ? `<span class="conversation-assignment">Em atendimento: <strong>${escapeHtml(item.assignedUserName)}</strong></span>` : ''}
         <span class="conversation-bottom"><span><i class="status-dot ${escapeHtml(item.status)}"></i>${escapeHtml(item.lastMessagePreview || 'Nova conversa')}</span>${item.unreadCount ? `<b>${item.unreadCount}</b>` : ''}</span>
       </span>
     </button>`).join('') : '<div class="empty" data-render-key="empty">Nenhuma conversa encontrada.</div>';
@@ -470,7 +471,7 @@ window.addEventListener('blur', closeConversationActions);
 $('#conversation-list').addEventListener('click', event => {
   const button = event.target.closest('[data-id]'); if (!button) return;
   const conversation = state.conversations.find(item => item.id === button.dataset.id);
-  if (state.user.role === 'admin') { openConversation(button.dataset.id); return; }
+  if (['admin', 'supervisor'].includes(state.user.role)) { openConversation(button.dataset.id); return; }
   if (conversation?.status === 'open' && conversation.assignedUserId && conversation.assignedUserId !== state.user.id) {
     $('#conversation-busy-agent').textContent = conversation.assignedUserName || 'outro atendente'; openDialog('conversation-busy-dialog'); return;
   }
@@ -707,7 +708,7 @@ $('#template-form').addEventListener('submit', async event => {
   const components = [...document.querySelectorAll('[data-template-component]')].reduce((items, input) => {
     const type = input.dataset.templateComponent.toLowerCase(); let component = items.find(item => item.type === type);
     if (!component) { component = { type, parameters: [] }; items.push(component); }
-    component.parameters.push({ type: 'text', text: input.value }); return items;
+    component.parameters.push({ type: 'text', text: input.value, ...(input.dataset.variableName ? { parameter_name: input.dataset.variableName } : {}) }); return items;
   }, []);
   try { await api(`/api/conversations/${state.active.id}/templates`, { method: 'POST', body: JSON.stringify({ name: template.name, language: template.language, components }) }); closeDialog('template-dialog'); await loadMessages(); toast('Template enviado.'); }
   catch (error) { $('#template-error').textContent = error.message; }
@@ -722,13 +723,15 @@ function renderTemplateForm(template) {
   const fields = [];
   for (const component of template.components || []) {
     if (!['BODY', 'HEADER'].includes(component.type) || typeof component.text !== 'string') continue;
-    const indexes = [...component.text.matchAll(/\{\{(\d+)\}\}/g)].map(match => Number(match[1]));
-    for (const index of [...new Set(indexes)].sort((a, b) => a - b)) {
+    const variables = [...component.text.matchAll(/\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*|\d+)\s*\}\}/g)].map(match => match[1]);
+    for (const variable of [...new Set(variables)]) {
+      const index = /^\d+$/.test(variable) ? Number(variable) : null;
       const orderField = template.name === 'pedido_recebido' && component.type === 'BODY';
-      const label = orderField ? (index === 1 ? 'Nome do cliente' : index === 2 ? 'Número do pedido' : `Variável ${index}`) : `Variável ${index} · ${component.type.toLowerCase()}`;
-      const value = orderField && index === 1 ? displayName(state.active) : '';
-      const placeholder = orderField && index === 2 ? 'Ex.: nº 12345' : `Valor de {{${index}}}`;
-      fields.push(`<label>${label}<input data-template-component="${component.type}" data-variable-index="${index}" value="${escapeHtml(value)}" required placeholder="${escapeHtml(placeholder)}"></label>`);
+      const isContactName = variable.toLowerCase() === 'nome' || (orderField && index === 1);
+      const label = isContactName ? 'Nome do cliente' : orderField && index === 2 ? 'Número do pedido' : `Variável ${variable} · ${component.type.toLowerCase()}`;
+      const value = isContactName ? displayName(state.active) : '';
+      const placeholder = orderField && index === 2 ? 'Ex.: nº 12345' : `Valor de {{${variable}}}`;
+      fields.push(`<label>${label}<input data-template-component="${component.type}" data-variable-name="${index === null ? escapeHtml(variable) : ''}" data-variable-token="${escapeHtml(variable)}" value="${escapeHtml(value)}" required placeholder="${escapeHtml(placeholder)}"></label>`);
     }
   }
   $('#template-variables').innerHTML = fields.join('');
@@ -738,7 +741,7 @@ function renderTemplateForm(template) {
 
 function updateTemplatePreview() {
   const preview = $('#template-preview'); let body = preview.dataset.body || '';
-  document.querySelectorAll('[data-template-component="BODY"]').forEach(input => { body = body.replaceAll(`{{${input.dataset.variableIndex}}}`, input.value || `{{${input.dataset.variableIndex}}}`); });
+  document.querySelectorAll('[data-template-component="BODY"]').forEach(input => { const token = input.dataset.variableToken; body = body.replace(new RegExp(`\\{\\{\\s*${token}\\s*\\}\\}`, 'g'), input.value || `{{${token}}}`); });
   const buttons = JSON.parse(preview.dataset.buttons || '[]');
   preview.innerHTML = `${preview.dataset.header ? `<strong>${escapeHtml(preview.dataset.header)}</strong>` : ''}<p>${escapeHtml(body).replaceAll('\n', '<br>')}</p>${preview.dataset.footer ? `<small>${escapeHtml(preview.dataset.footer)}</small>` : ''}${buttons.length ? `<div class="template-preview-buttons">${buttons.map(button => `<span>${escapeHtml(button.text || 'Abrir')}</span>`).join('')}</div>` : ''}`;
 }
