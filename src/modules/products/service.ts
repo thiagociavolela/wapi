@@ -94,7 +94,7 @@ function formattedDiscount(value: string) {
   return `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(amount)}%`;
 }
 
-export function productCaption(product: Product) {
+export function productCaption(product: Product, includeDescription = true) {
   const heading = `*${product.name}*`;
   const tail: string[] = [];
   if (product.price) tail.push(`Valor do produto: *${formattedPrice(product.price)}*`);
@@ -104,7 +104,7 @@ export function productCaption(product: Product) {
   if (Number.isFinite(priceAmount) && Number.isFinite(discountAmount) && discountAmount > 0) tail.push(`Valor com desconto: *${formattedPrice(priceAmount * (1 - discountAmount / 100))}*`);
   tail.push("Em até 3x sem juros no cartão.");
   const fixedLength = [heading, ...tail].join("\n\n").length;
-  const description = (product.description || product.shortDescription).slice(0, Math.max(0, 1024 - fixedLength - 4));
+  const description = includeDescription ? (product.description || product.shortDescription).slice(0, Math.max(0, 1024 - fixedLength - 4)) : "";
   return [heading, ...(description ? [description] : []), ...tail].join("\n\n").slice(0, 1024);
 }
 

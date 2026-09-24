@@ -136,11 +136,13 @@ apiRouter.get("/products/:productId", async (req, res) => {
 apiRouter.post("/conversations/:id/products/:productId/send", requireAdminAssignment, async (req, res) => {
   const productId = z.coerce.number().int().positive().safeParse(req.params.productId);
   if (!productId.success) return res.status(400).json({ error: "Produto inválido." });
+  const options = z.object({ includeDescription: z.boolean().default(true) }).safeParse(req.body ?? {});
+  if (!options.success) return res.status(400).json({ error: "Opções de envio inválidas." });
   try {
     const product = await getProduct(productId.data);
     if (!product) return res.status(404).json({ error: "Produto não encontrado." });
     const image = await downloadProductImage(product);
-    res.status(201).json(await sendAgentMedia(req.auth!.organizationId, req.auth!.id, String(req.params.id), { ...image, caption: productCaption(product) }));
+    res.status(201).json(await sendAgentMedia(req.auth!.organizationId, req.auth!.id, String(req.params.id), { ...image, caption: productCaption(product, options.data.includeDescription) }));
   } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar produto." }); }
 });
 apiRouter.post("/conversations/:id/assign", async (req, res) => {
