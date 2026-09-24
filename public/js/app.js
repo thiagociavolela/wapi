@@ -108,6 +108,7 @@ function renderConversations() {
 
 async function openConversation(id) {
   closeConversationSearch();
+  resetProductPanel();
   state.active = state.conversations.find(item => item.id === id);
   if (!state.active) return;
   $('.app-shell').classList.add('chat-open');
@@ -318,6 +319,69 @@ function renderAgentOptions() {
 function renderTeamOptions() {
   $('#team-select').innerHTML = '<option value="">Sem equipe</option>' + state.teams.filter(team => team.active).map(team => `<option value="${team.id}">${escapeHtml(team.name)}</option>`).join('');
 }
+
+document.querySelectorAll('[data-details-tab]').forEach(button => button.addEventListener('click', () => {
+  document.querySelectorAll('[data-details-tab]').forEach(tab => { const active = tab === button; tab.classList.toggle('active', active); tab.setAttribute('aria-selected', String(active)); });
+  document.querySelectorAll('[data-details-panel]').forEach(panel => panel.classList.toggle('hidden', panel.dataset.detailsPanel !== button.dataset.detailsTab));
+  button.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+}));
+const detailsTabStrip = $('.details-tabs'); let detailsTabDrag = null; let suppressDetailsTabClick = false;
+detailsTabStrip.addEventListener('pointerdown', event => { if (event.pointerType !== 'mouse' || event.button !== 0) return; detailsTabDrag = { x: event.clientX, scrollLeft: detailsTabStrip.scrollLeft, moved: false, pointerId: event.pointerId }; });
+detailsTabStrip.addEventListener('pointermove', event => { if (!detailsTabDrag) return; const distance = event.clientX - detailsTabDrag.x; if (Math.abs(distance) > 4 && !detailsTabDrag.moved) { detailsTabDrag.moved = true; detailsTabStrip.setPointerCapture(detailsTabDrag.pointerId); } if (detailsTabDrag.moved) detailsTabStrip.scrollLeft = detailsTabDrag.scrollLeft - distance; });
+detailsTabStrip.addEventListener('pointerup', () => { if (!detailsTabDrag) return; suppressDetailsTabClick = detailsTabDrag.moved; detailsTabDrag = null; });
+detailsTabStrip.addEventListener('pointercancel', () => { detailsTabDrag = null; });
+detailsTabStrip.addEventListener('click', event => { if (suppressDetailsTabClick) { event.preventDefault(); event.stopImmediatePropagation(); suppressDetailsTabClick = false; } }, true);
+detailsTabStrip.addEventListener('wheel', event => { if (detailsTabStrip.scrollWidth <= detailsTabStrip.clientWidth) return; event.preventDefault(); detailsTabStrip.scrollLeft += event.deltaY || event.deltaX; }, { passive: false });
+
+let productSearchTimer = null; let selectedProduct = null;
+function resetProductPanel() {
+  selectedProduct = null; clearTimeout(productSearchTimer);
+  if (!$('#product-search-input')) return;
+  $('#product-search-input').value = ''; $('#product-search-results').classList.add('hidden'); $('#product-search-results').replaceChildren();
+  $('#product-detail').innerHTML = '<div class="product-empty"><span>▣</span><strong>Selecione um produto</strong><p>Digite o nome acima para consultar o catálogo.</p></div>';
+}
+function productPrice(value) {
+  const source = String(value ?? '').trim(); if (!source) return 'Não informado';
+  if (/R\$/i.test(source)) return source;
+  const normalized = productNumber(source);
+  return Number.isFinite(normalized) ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(normalized) : source;
+}
+function productNumber(value) { const source = String(value ?? '').replace(/[^\d,.-]/g, '').trim(); return Number(source.includes(',') ? source.replace(/\./g, '').replace(',', '.') : source); }
+function productDiscount(value) {
+  const amount = productNumber(value);
+  return Number.isFinite(amount) && amount > 0 ? `${new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(amount)}%` : '';
+}
+function safeProductDescription(value) {
+  const source = String(value || '');
+  if (!/<[a-z][\s\S]*>/i.test(source)) return escapeHtml(source).replaceAll('\n', '<br>');
+  const documentValue = new DOMParser().parseFromString(source, 'text/html');
+  const allowed = new Set(['P', 'BR', 'UL', 'OL', 'LI', 'STRONG', 'B', 'EM', 'I', 'H1', 'H2', 'H3', 'H4', 'BLOCKQUOTE']);
+  documentValue.body.querySelectorAll('script,style,iframe,object,embed,svg,form,input,button').forEach(element => element.remove());
+  [...documentValue.body.querySelectorAll('*')].reverse().forEach(element => {
+    if (allowed.has(element.tagName)) { [...element.attributes].forEach(attribute => element.removeAttribute(attribute.name)); return; }
+    element.replaceWith(...element.childNodes);
+  });
+  return documentValue.body.innerHTML;
+}
+function renderProductResults(items) {
+  const results = $('#product-search-results');
+  results.innerHTML = items.length ? items.map(product => `<button type="button" data-select-product="${product.id}">${product.imageUrl && safeImageUrl(product.imageUrl) ? `<img src="${escapeHtml(safeImageUrl(product.imageUrl))}" alt="">` : '<span class="product-result-placeholder">▣</span>'}<span><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml(productPrice(product.price))}</small></span><i class="product-status-dot ${product.active ? 'active' : ''}"></i></button>`).join('') : '<div class="product-results-empty">Nenhum produto encontrado.</div>';
+  results.classList.remove('hidden');
+}
+async function searchProductCatalog() {
+  const term = $('#product-search-input').value.trim();
+  if (term.length < 2) { $('#product-search-results').classList.add('hidden'); return; }
+  $('#product-search-results').innerHTML = '<div class="product-results-empty">Buscando…</div>'; $('#product-search-results').classList.remove('hidden');
+  try { const data = await api(`/api/products?search=${encodeURIComponent(term)}`); if ($('#product-search-input').value.trim() === term) renderProductResults(data.items || []); }
+  catch (error) { $('#product-search-results').innerHTML = `<div class="product-results-empty error">${escapeHtml(error.message)}</div>`; }
+}
+function renderProductDetail(product) {
+  selectedProduct = product; const image = safeImageUrl(product.imageUrl); const discount = productDiscount(product.discount); const priceAmount = productNumber(product.price); const discountAmount = productNumber(product.discount); const discountedPrice = Number.isFinite(priceAmount) && Number.isFinite(discountAmount) && discountAmount > 0 ? productPrice(priceAmount * (1 - discountAmount / 100)) : '';
+  $('#product-detail').innerHTML = `<article class="product-card">${image ? `<img class="product-image" src="${escapeHtml(image)}" alt="${escapeHtml(product.name)}">` : '<div class="product-image product-image-empty">Sem imagem</div>'}<div class="product-card-body"><div class="product-card-title"><h3>${escapeHtml(product.name)}</h3><span class="product-status ${product.active ? 'active' : ''}">${product.active ? 'Ativo' : 'Inativo'}</span></div><div class="product-description">${safeProductDescription(product.descriptionHtml || product.description || product.shortDescription || 'Sem descrição cadastrada.')}</div><dl class="${discount ? '' : 'single'}"><div><dt>Valor do produto</dt><dd>${escapeHtml(productPrice(product.price))}</dd></div>${discount ? `<div><dt>Desconto</dt><dd>${escapeHtml(discount)}</dd></div><div class="product-final-price"><dt>Valor com desconto</dt><dd>${escapeHtml(discountedPrice)}</dd></div>` : ''}</dl><p class="product-installments">Em até 3x sem juros no cartão.</p><button id="send-product" class="primary" type="button"><svg viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4zM22 2 11 13"/></svg><span>Enviar produto</span></button></div></article>`;
+}
+$('#product-search-input').addEventListener('input', () => { clearTimeout(productSearchTimer); productSearchTimer = setTimeout(searchProductCatalog, 280); });
+$('#product-search-results').addEventListener('click', async event => { const button = event.target.closest('[data-select-product]'); if (!button) return; try { const product = await api(`/api/products/${button.dataset.selectProduct}`); renderProductDetail(product); $('#product-search-results').classList.add('hidden'); $('#product-search-input').value = product.name; } catch (error) { toast(error.message); } });
+$('#product-detail').addEventListener('click', async event => { const button = event.target.closest('#send-product'); if (!button || !selectedProduct || !state.active) return; button.disabled = true; button.querySelector('span').textContent = 'Enviando…'; try { await api(`/api/conversations/${state.active.id}/products/${selectedProduct.id}/send`, { method: 'POST' }); await Promise.all([loadMessages(), loadConversations()]); toast('Produto enviado ao contato.'); button.querySelector('span').textContent = 'Produto enviado'; } catch (error) { toast(error.message); button.disabled = false; button.querySelector('span').textContent = 'Enviar produto'; } });
 
 function renderQuickReplies(items = state.quickReplies, filtering = false) {
   state.quickReplyMatches = items;

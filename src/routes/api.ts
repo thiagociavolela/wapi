@@ -11,6 +11,7 @@ import { listMessageTemplates } from "../modules/meta/client.js";
 import { createTeam, createUser, getDashboard, getIntegrationDashboard, getSlaPolicy, listManagedUsers, listTeams, updateSlaPolicy, updateTeam, updateUser } from "../modules/management/service.js";
 import { changeCampaignStatus, createCampaign, getCampaign, listCampaigns, parseCampaignContacts } from "../modules/campaigns/service.js";
 import { buildCommerceTemplateComponents, buildTemplateSnapshot } from "../modules/integrations/service.js";
+import { downloadProductImage, getProduct, productCaption, searchProducts } from "../modules/products/service.js";
 
 export const apiRouter = Router();
 const scheduledMessageSchema = z.discriminatedUnion("messageType", [
@@ -116,6 +117,31 @@ apiRouter.get("/templates", async (_req, res) => {
     const result = await listMessageTemplates();
     res.json({ items: result.data.filter((item) => item.status === "APPROVED") });
   } catch (error) { res.status(502).json({ error: error instanceof Error ? error.message : "Falha ao listar templates." }); }
+});
+apiRouter.get("/products", async (req, res) => {
+  const parsed = z.string().trim().min(1).max(120).safeParse(req.query.search);
+  if (!parsed.success) return res.json({ items: [] });
+  try { res.json({ items: await searchProducts(parsed.data) }); }
+  catch (error) { res.status(502).json({ error: error instanceof Error ? error.message : "Falha ao pesquisar produtos." }); }
+});
+apiRouter.get("/products/:productId", async (req, res) => {
+  const productId = z.coerce.number().int().positive().safeParse(req.params.productId);
+  if (!productId.success) return res.status(400).json({ error: "Produto inválido." });
+  try {
+    const product = await getProduct(productId.data);
+    if (!product) return res.status(404).json({ error: "Produto não encontrado." });
+    res.json(product);
+  } catch (error) { res.status(502).json({ error: error instanceof Error ? error.message : "Falha ao carregar produto." }); }
+});
+apiRouter.post("/conversations/:id/products/:productId/send", requireAdminAssignment, async (req, res) => {
+  const productId = z.coerce.number().int().positive().safeParse(req.params.productId);
+  if (!productId.success) return res.status(400).json({ error: "Produto inválido." });
+  try {
+    const product = await getProduct(productId.data);
+    if (!product) return res.status(404).json({ error: "Produto não encontrado." });
+    const image = await downloadProductImage(product);
+    res.status(201).json(await sendAgentMedia(req.auth!.organizationId, req.auth!.id, String(req.params.id), { ...image, caption: productCaption(product) }));
+  } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar produto." }); }
 });
 apiRouter.post("/conversations/:id/assign", async (req, res) => {
   const parsed = z.object({ userId: z.string().uuid().nullable() }).safeParse(req.body);
