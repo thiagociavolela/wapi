@@ -12,6 +12,7 @@ import { createTeam, createUser, getDashboard, getIntegrationDashboard, getSlaPo
 import { changeCampaignStatus, createCampaign, getCampaign, listCampaigns, parseCampaignContacts } from "../modules/campaigns/service.js";
 import { buildCommerceTemplateComponents, buildTemplateSnapshot } from "../modules/integrations/service.js";
 import { downloadProductImage, getProduct, productCaption, productDescriptionMessages, searchProducts } from "../modules/products/service.js";
+import { createPaymentLink, getPaymentLink, listPaymentLinks } from "../modules/payments/service.js";
 
 export const apiRouter = Router();
 const scheduledMessageSchema = z.discriminatedUnion("messageType", [
@@ -149,6 +150,25 @@ apiRouter.post("/conversations/:id/products/:productId/send", requireAdminAssign
     }
     res.status(201).json({ ...media, descriptions });
   } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar produto." }); }
+});
+apiRouter.get("/conversations/:id/payment-links", async (req, res) => {
+  try { res.json({ items: await listPaymentLinks(req.auth!.organizationId, String(req.params.id)) }); }
+  catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao listar cobranças." }); }
+});
+apiRouter.post("/conversations/:id/payment-links", requireAdminAssignment, async (req, res) => {
+  const parsed = z.object({ name: z.string().trim().min(2).max(160), email: z.union([z.string().trim().email().max(190), z.literal("")]).optional(), description: z.string().trim().max(500).optional(), amount: z.string().trim().min(1).max(40) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Revise nome, e-mail, descrição e valor da cobrança." });
+  try { res.status(201).json(await createPaymentLink(req.auth!.organizationId, req.auth!.id, String(req.params.id), parsed.data)); }
+  catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao gerar link de pagamento." }); }
+});
+apiRouter.post("/conversations/:id/payment-links/:paymentLinkId/send", requireAdminAssignment, async (req, res) => {
+  try {
+    const link = await getPaymentLink(req.auth!.organizationId, String(req.params.paymentLinkId));
+    if (!link?.paymentUrl) return res.status(404).json({ error: "Link de pagamento não encontrado." });
+    const amount = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(link.amount));
+    const text = [`*Link de pagamento*`, link.description ? String(link.description) : "Cobrança", `Valor: *${amount}*`, String(link.paymentUrl)].join("\n\n");
+    res.status(201).json(await sendAgentText(req.auth!.organizationId, req.auth!.id, String(req.params.id), text));
+  } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar link de pagamento." }); }
 });
 apiRouter.post("/conversations/:id/assign", async (req, res) => {
   const parsed = z.object({ userId: z.string().uuid().nullable() }).safeParse(req.body);

@@ -118,6 +118,7 @@ async function openConversation(id) {
   $('#detail-phone').textContent = state.active.phone;
   $('#chat-avatar').textContent = $('#detail-avatar').textContent = initials(name);
   $('#detail-agent').textContent = state.active.assignedUserName || 'Não atribuído';
+  resetPaymentLinkPanel();
   renderAdminAccess();
   $('#status').value = state.active.status;
   $('#team-select').value = state.active.teamId || ''; $('#priority-select').value = state.active.priority || 'normal';
@@ -324,6 +325,7 @@ document.querySelectorAll('[data-details-tab]').forEach(button => button.addEven
   document.querySelectorAll('[data-details-tab]').forEach(tab => { const active = tab === button; tab.classList.toggle('active', active); tab.setAttribute('aria-selected', String(active)); });
   document.querySelectorAll('[data-details-panel]').forEach(panel => panel.classList.toggle('hidden', panel.dataset.detailsPanel !== button.dataset.detailsTab));
   button.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  if (button.dataset.detailsTab === 'payment-link') void loadPaymentLinks();
 }));
 const detailsTabStrip = $('.details-tabs'); let detailsTabDrag = null; let suppressDetailsTabClick = false;
 detailsTabStrip.addEventListener('pointerdown', event => { if (event.pointerType !== 'mouse' || event.button !== 0) return; detailsTabDrag = { x: event.clientX, scrollLeft: detailsTabStrip.scrollLeft, moved: false, pointerId: event.pointerId }; });
@@ -382,6 +384,42 @@ function renderProductDetail(product) {
 $('#product-search-input').addEventListener('input', () => { clearTimeout(productSearchTimer); productSearchTimer = setTimeout(searchProductCatalog, 280); });
 $('#product-search-results').addEventListener('click', async event => { const button = event.target.closest('[data-select-product]'); if (!button) return; try { const product = await api(`/api/products/${button.dataset.selectProduct}`); renderProductDetail(product); $('#product-search-results').classList.add('hidden'); $('#product-search-input').value = product.name; } catch (error) { toast(error.message); } });
 $('#product-detail').addEventListener('click', async event => { const button = event.target.closest('#send-product'); if (!button || !selectedProduct || !state.active) return; const includeDescription = Boolean($('#send-product-description')?.checked); button.disabled = true; button.querySelector('span').textContent = 'Enviando…'; try { await api(`/api/conversations/${state.active.id}/products/${selectedProduct.id}/send`, { method: 'POST', body: JSON.stringify({ includeDescription }) }); await Promise.all([loadMessages(), loadConversations()]); toast('Produto enviado ao contato.'); button.querySelector('span').textContent = 'Produto enviado'; } catch (error) { toast(error.message); button.disabled = false; button.querySelector('span').textContent = 'Enviar produto'; } });
+
+function resetPaymentLinkPanel() {
+  if (!$('#payment-link-form') || !state.active) return;
+  $('#payment-link-form').reset(); $('#payment-link-name').value = displayName(state.active); $('#payment-link-phone').value = state.active.phone || state.active.waId || '';
+  $('#payment-link-error').textContent = ''; $('#payment-link-result').classList.add('hidden'); $('#payment-link-result').replaceChildren();
+}
+function paymentStatus(status) { return ({ creating: 'Criando', pending: 'Pendente', approved: 'Aprovado', rejected: 'Recusado', cancelled: 'Cancelado', refunded: 'Estornado', error: 'Erro' })[status] || status; }
+function paymentAmount(value) { return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(value || 0)); }
+function renderPaymentLinkResult(link) {
+  $('#payment-link-result').innerHTML = `<div><span>Link gerado</span><strong>${escapeHtml(paymentAmount(link.amount))}</strong></div><a href="${escapeHtml(safeImageUrl(link.paymentUrl))}" target="_blank" rel="noopener">${escapeHtml(link.paymentUrl)}</a><div class="payment-result-actions"><button type="button" data-copy-payment-url="${escapeHtml(link.paymentUrl)}">Copiar</button><button class="primary" type="button" data-send-payment-link="${link.id}">Enviar ao contato</button></div>`;
+  $('#payment-link-result').classList.remove('hidden');
+}
+async function loadPaymentLinks() {
+  if (!state.active) return; const conversationId = state.active.id;
+  try {
+    const data = await api(`/api/conversations/${conversationId}/payment-links`); if (state.active?.id !== conversationId) return;
+    $('#payment-link-list').innerHTML = data.items?.length ? data.items.map(link => `<article class="payment-history-item"><div><strong>${escapeHtml(link.description || 'Cobrança')}</strong><small>${escapeHtml(dateTime(link.createdAt))} · ${escapeHtml(link.createdByName || '')}</small></div><span class="payment-state ${escapeHtml(link.status)}">${escapeHtml(paymentStatus(link.status))}</span><b>${escapeHtml(paymentAmount(link.amount))}</b>${link.paymentUrl ? `<div class="payment-history-actions"><button type="button" data-copy-payment-url="${escapeHtml(link.paymentUrl)}">Copiar</button><button type="button" data-send-payment-link="${link.id}">Enviar</button></div>` : ''}</article>`).join('') : '<div class="payment-link-empty">Nenhuma cobrança gerada.</div>';
+  } catch (error) { $('#payment-link-list').innerHTML = `<div class="payment-link-empty error">${escapeHtml(error.message)}</div>`; }
+}
+async function sendPaymentLink(id, button) {
+  if (!state.active) return; button.disabled = true;
+  try { await api(`/api/conversations/${state.active.id}/payment-links/${id}/send`, { method: 'POST' }); await Promise.all([loadMessages(), loadConversations()]); toast('Link de pagamento enviado.'); }
+  catch (error) { toast(error.message); } finally { button.disabled = false; }
+}
+$('#payment-link-form').addEventListener('submit', async event => {
+  event.preventDefault(); if (!state.active) return; const button = $('#generate-payment-link'); button.disabled = true; $('#payment-link-error').textContent = '';
+  try {
+    const link = await api(`/api/conversations/${state.active.id}/payment-links`, { method: 'POST', body: JSON.stringify({ name: $('#payment-link-name').value, email: $('#payment-link-email').value, description: $('#payment-link-description').value, amount: $('#payment-link-amount').value }) });
+    renderPaymentLinkResult(link); await loadPaymentLinks(); toast('Link de pagamento gerado.');
+  } catch (error) { $('#payment-link-error').textContent = error.message; } finally { button.disabled = false; }
+});
+$('#details-payment-link-panel').addEventListener('click', async event => {
+  const copy = event.target.closest('[data-copy-payment-url]'); if (copy) { await navigator.clipboard.writeText(copy.dataset.copyPaymentUrl); return toast('Link copiado.'); }
+  const send = event.target.closest('[data-send-payment-link]'); if (send) await sendPaymentLink(send.dataset.sendPaymentLink, send);
+});
+$('#refresh-payment-links').addEventListener('click', loadPaymentLinks);
 
 function renderQuickReplies(items = state.quickReplies, filtering = false) {
   state.quickReplyMatches = items;
