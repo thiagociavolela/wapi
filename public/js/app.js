@@ -393,14 +393,14 @@ function resetPaymentLinkPanel() {
 function paymentStatus(status) { return ({ creating: 'Criando', pending: 'Pendente', approved: 'Aprovado', rejected: 'Recusado', cancelled: 'Cancelado', refunded: 'Estornado', error: 'Erro' })[status] || status; }
 function paymentAmount(value) { return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(value || 0)); }
 function renderPaymentLinkResult(link) {
-  $('#payment-link-result').innerHTML = `<div><span>Link gerado</span><strong>${escapeHtml(paymentAmount(link.amount))}</strong></div><a href="${escapeHtml(safeImageUrl(link.paymentUrl))}" target="_blank" rel="noopener">${escapeHtml(link.paymentUrl)}</a><div class="payment-result-actions"><button type="button" data-copy-payment-url="${escapeHtml(link.paymentUrl)}">Copiar</button><button class="primary" type="button" data-send-payment-link="${link.id}">Enviar ao contato</button></div>`;
+  $('#payment-link-result').innerHTML = `<div><span>Link gerado</span><strong>${escapeHtml(paymentAmount(link.amount))}</strong><button class="payment-delete" type="button" data-delete-payment-link="${link.id}" title="Excluir link" aria-label="Excluir link"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14M10 10v6m4-6v6"/></svg></button></div><a href="${escapeHtml(safeImageUrl(link.paymentUrl))}" target="_blank" rel="noopener">${escapeHtml(link.paymentUrl)}</a><div class="payment-result-actions"><button type="button" data-copy-payment-url="${escapeHtml(link.paymentUrl)}">Copiar</button><button class="primary" type="button" data-send-payment-link="${link.id}">Enviar ao contato</button></div>`;
   $('#payment-link-result').classList.remove('hidden');
 }
 async function loadPaymentLinks() {
   if (!state.active) return; const conversationId = state.active.id;
   try {
     const data = await api(`/api/conversations/${conversationId}/payment-links`); if (state.active?.id !== conversationId) return;
-    $('#payment-link-list').innerHTML = data.items?.length ? data.items.map(link => `<article class="payment-history-item"><div><strong>${escapeHtml(link.description || 'Cobrança')}</strong><small>${escapeHtml(dateTime(link.createdAt))} · ${escapeHtml(link.createdByName || '')}</small></div><span class="payment-state ${escapeHtml(link.status)}">${escapeHtml(paymentStatus(link.status))}</span><b>${escapeHtml(paymentAmount(link.amount))}</b>${link.paymentUrl ? `<div class="payment-history-actions"><button type="button" data-copy-payment-url="${escapeHtml(link.paymentUrl)}">Copiar</button><button type="button" data-send-payment-link="${link.id}">Enviar</button></div>` : ''}</article>`).join('') : '<div class="payment-link-empty">Nenhuma cobrança gerada.</div>';
+    $('#payment-link-list').innerHTML = data.items?.length ? data.items.map(link => `<article class="payment-history-item"><div><strong>${escapeHtml(link.description || 'Cobrança')}</strong><small>${escapeHtml(dateTime(link.createdAt))} · ${escapeHtml(link.createdByName || '')}</small></div><span class="payment-state ${escapeHtml(link.status)}">${escapeHtml(paymentStatus(link.status))}</span><button class="payment-delete" type="button" data-delete-payment-link="${link.id}" title="Excluir link" aria-label="Excluir link"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14M10 10v6m4-6v6"/></svg></button><b>${escapeHtml(paymentAmount(link.amount))}</b>${link.paymentUrl ? `<div class="payment-history-actions"><button type="button" data-copy-payment-url="${escapeHtml(link.paymentUrl)}">Copiar</button><button type="button" data-send-payment-link="${link.id}">Enviar</button></div>` : ''}</article>`).join('') : '<div class="payment-link-empty">Nenhuma cobrança gerada.</div>';
   } catch (error) { $('#payment-link-list').innerHTML = `<div class="payment-link-empty error">${escapeHtml(error.message)}</div>`; }
 }
 async function sendPaymentLink(id, button) {
@@ -416,6 +416,22 @@ $('#payment-link-form').addEventListener('submit', async event => {
   } catch (error) { $('#payment-link-error').textContent = error.message; } finally { button.disabled = false; }
 });
 $('#details-payment-link-panel').addEventListener('click', async event => {
+  const remove = event.target.closest('[data-delete-payment-link]');
+  if (remove) {
+    if (!confirm('Excluir este link do sistema?')) return;
+    remove.disabled = true;
+    try {
+      const paymentLinkId = remove.dataset.deletePaymentLink;
+      await api(`/api/conversations/${state.active.id}/payment-links/${paymentLinkId}`, { method: 'DELETE' });
+      const currentResultDelete = $('#payment-link-result').querySelector('[data-delete-payment-link]');
+      if (currentResultDelete?.dataset.deletePaymentLink === paymentLinkId) {
+        $('#payment-link-result').classList.add('hidden');
+        $('#payment-link-result').replaceChildren();
+      }
+      await loadPaymentLinks(); toast('Link excluído do sistema.');
+    } catch (error) { toast(error.message); remove.disabled = false; }
+    return;
+  }
   const copy = event.target.closest('[data-copy-payment-url]'); if (copy) { await navigator.clipboard.writeText(copy.dataset.copyPaymentUrl); return toast('Link copiado.'); }
   const send = event.target.closest('[data-send-payment-link]'); if (send) await sendPaymentLink(send.dataset.sendPaymentLink, send);
 });

@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { RowDataPacket } from "mysql2";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { config } from "../../config.js";
 import { pool } from "../../database/pool.js";
 
@@ -72,6 +72,11 @@ export async function listPaymentLinks(organizationId: string, conversationId: s
     FROM payment_links pl JOIN users u ON u.id = pl.created_by_user_id
     WHERE pl.organization_id = ? AND pl.conversation_id = ? ORDER BY pl.created_at DESC LIMIT 20`, [organizationId, conversationId]);
   return rows;
+}
+
+export async function deletePaymentLink(organizationId: string, id: string) {
+  const [result] = await pool.execute<ResultSetHeader>("DELETE FROM payment_links WHERE id = ? AND organization_id = ?", [id, organizationId]);
+  return result.affectedRows > 0;
 }
 
 export async function getPaymentLink(organizationId: string, id: string) {

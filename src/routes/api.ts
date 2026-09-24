@@ -12,7 +12,7 @@ import { createTeam, createUser, getDashboard, getIntegrationDashboard, getSlaPo
 import { changeCampaignStatus, createCampaign, getCampaign, listCampaigns, parseCampaignContacts } from "../modules/campaigns/service.js";
 import { buildCommerceTemplateComponents, buildTemplateSnapshot } from "../modules/integrations/service.js";
 import { downloadProductImage, getProduct, productCaption, productDescriptionMessages, searchProducts } from "../modules/products/service.js";
-import { createPaymentLink, getPaymentLink, listPaymentLinks } from "../modules/payments/service.js";
+import { createPaymentLink, deletePaymentLink, getPaymentLink, listPaymentLinks } from "../modules/payments/service.js";
 
 export const apiRouter = Router();
 const scheduledMessageSchema = z.discriminatedUnion("messageType", [
@@ -169,6 +169,13 @@ apiRouter.post("/conversations/:id/payment-links/:paymentLinkId/send", requireAd
     const text = [`*Link de pagamento*`, link.description ? String(link.description) : "Cobrança", `Valor: *${amount}*`, String(link.paymentUrl)].join("\n\n");
     res.status(201).json(await sendAgentText(req.auth!.organizationId, req.auth!.id, String(req.params.id), text));
   } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar link de pagamento." }); }
+});
+apiRouter.delete("/conversations/:id/payment-links/:paymentLinkId", requireAdminAssignment, async (req, res) => {
+  try {
+    const ok = await deletePaymentLink(req.auth!.organizationId, String(req.params.paymentLinkId));
+    if (!ok) return res.status(404).json({ error: "Link de pagamento não encontrado." });
+    res.json({ ok: true });
+  } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao excluir link de pagamento." }); }
 });
 apiRouter.post("/conversations/:id/assign", async (req, res) => {
   const parsed = z.object({ userId: z.string().uuid().nullable() }).safeParse(req.body);
