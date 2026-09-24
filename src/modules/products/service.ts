@@ -41,7 +41,17 @@ function imageUrl(value: unknown) {
 }
 
 function plainText(value: unknown) {
-  return String(value ?? "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p\s*>/gi, "\n\n").replace(/<\/li\s*>/gi, "\n").replace(/<[^>]*>/g, " ").replace(/&nbsp;/gi, " ").replace(/[ \t]+/g, " ").replace(/\n\s+/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  const entities: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+  return String(value ?? "")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n").replace(/<li\b[^>]*>/gi, "• ")
+    .replace(/<\/(p|div|h[1-6]|blockquote|section|article)\s*>/gi, "\n\n").replace(/<\/(li|ul|ol)\s*>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (_match, entity: string) => {
+      if (entity[0] === "#") { const hexadecimal = entity[1]?.toLowerCase() === "x"; const code = Number.parseInt(entity.slice(hexadecimal ? 2 : 1), hexadecimal ? 16 : 10); return Number.isFinite(code) ? String.fromCodePoint(code) : ""; }
+      return entities[entity.toLowerCase()] ?? `&${entity};`;
+    })
+    .replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n[ \t]+/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function mapProduct(row: RowDataPacket): Product {
@@ -106,6 +116,24 @@ export function productCaption(product: Product, includeDescription = true) {
   const fixedLength = [heading, ...tail].join("\n\n").length;
   const description = includeDescription ? (product.description || product.shortDescription).slice(0, Math.max(0, 1024 - fixedLength - 4)) : "";
   return [heading, ...(description ? [description] : []), ...tail].join("\n\n").slice(0, 1024);
+}
+
+export function productDescriptionMessages(product: Product) {
+  const description = plainText(product.descriptionHtml || product.description || product.shortDescription);
+  if (!description) return [];
+  const prefix = "*Descrição do produto:*\n\n"; const limit = 4000; const messages: string[] = [];
+  let remaining = description;
+  while (remaining) {
+    const available = limit - (messages.length ? 0 : prefix.length);
+    let end = Math.min(available, remaining.length);
+    if (end < remaining.length) {
+      const paragraph = remaining.lastIndexOf("\n", end); const space = remaining.lastIndexOf(" ", end);
+      end = Math.max(paragraph, space, Math.floor(available * 0.75));
+    }
+    const part = remaining.slice(0, end).trim(); remaining = remaining.slice(end).trim();
+    if (part) messages.push(`${messages.length ? "" : prefix}${part}`);
+  }
+  return messages;
 }
 
 export function convertProductImageToJpeg(input: Buffer) {

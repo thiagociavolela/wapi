@@ -11,7 +11,7 @@ import { listMessageTemplates } from "../modules/meta/client.js";
 import { createTeam, createUser, getDashboard, getIntegrationDashboard, getSlaPolicy, listManagedUsers, listTeams, updateSlaPolicy, updateTeam, updateUser } from "../modules/management/service.js";
 import { changeCampaignStatus, createCampaign, getCampaign, listCampaigns, parseCampaignContacts } from "../modules/campaigns/service.js";
 import { buildCommerceTemplateComponents, buildTemplateSnapshot } from "../modules/integrations/service.js";
-import { downloadProductImage, getProduct, productCaption, searchProducts } from "../modules/products/service.js";
+import { downloadProductImage, getProduct, productCaption, productDescriptionMessages, searchProducts } from "../modules/products/service.js";
 
 export const apiRouter = Router();
 const scheduledMessageSchema = z.discriminatedUnion("messageType", [
@@ -142,7 +142,12 @@ apiRouter.post("/conversations/:id/products/:productId/send", requireAdminAssign
     const product = await getProduct(productId.data);
     if (!product) return res.status(404).json({ error: "Produto não encontrado." });
     const image = await downloadProductImage(product);
-    res.status(201).json(await sendAgentMedia(req.auth!.organizationId, req.auth!.id, String(req.params.id), { ...image, caption: productCaption(product, options.data.includeDescription) }));
+    const media = await sendAgentMedia(req.auth!.organizationId, req.auth!.id, String(req.params.id), { ...image, caption: productCaption(product, false) });
+    const descriptions = [];
+    if (options.data.includeDescription) {
+      for (const text of productDescriptionMessages(product)) descriptions.push(await sendAgentText(req.auth!.organizationId, req.auth!.id, String(req.params.id), text));
+    }
+    res.status(201).json({ ...media, descriptions });
   } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar produto." }); }
 });
 apiRouter.post("/conversations/:id/assign", async (req, res) => {
