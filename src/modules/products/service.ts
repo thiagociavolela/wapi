@@ -113,6 +113,7 @@ export function productCaption(product: Product, includeDescription = true) {
   const priceAmount = numericValue(product.price); const discountAmount = numericValue(product.discount);
   if (Number.isFinite(priceAmount) && Number.isFinite(discountAmount) && discountAmount > 0) tail.push(`Valor com desconto: *${formattedPrice(priceAmount * (1 - discountAmount / 100))}*`);
   tail.push("Em até 3x sem juros no cartão.");
+  if (!discount) tail.push("5% de desconto no pix.");
   const fixedLength = [heading, ...tail].join("\n\n").length;
   const description = includeDescription ? (product.description || product.shortDescription).slice(0, Math.max(0, 1024 - fixedLength - 4)) : "";
   return [heading, ...(description ? [description] : []), ...tail].join("\n\n").slice(0, 1024);
