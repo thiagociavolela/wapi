@@ -151,6 +151,19 @@ function layoutConversation() {
   messages.style.bottom = `${Math.max(reserved, 100)}px`;
 }
 
+const detailsToggle = $('#details-toggle');
+function setDetailsCollapsed(collapsed, persist = true) {
+  $('.app-shell').classList.toggle('details-collapsed', collapsed);
+  detailsToggle.setAttribute('aria-expanded', String(!collapsed));
+  detailsToggle.setAttribute('aria-label', collapsed ? 'Exibir painel lateral' : 'Ocultar painel lateral');
+  detailsToggle.title = collapsed ? 'Exibir painel lateral' : 'Ocultar painel lateral';
+  if (persist) localStorage.setItem('chat.detailsCollapsed', collapsed ? 'true' : 'false');
+  requestAnimationFrame(layoutConversation);
+}
+setDetailsCollapsed(localStorage.getItem('chat.detailsCollapsed') === 'true', false);
+detailsToggle.addEventListener('click', () => setDetailsCollapsed(!$('.app-shell').classList.contains('details-collapsed')));
+$('.app-shell').addEventListener('transitionend', event => { if (event.propertyName === 'grid-template-columns') layoutConversation(); });
+
 function updateWindow() {
   const open = windowOpen(state.active); const label = open ? `Janela aberta até ${dateTime(state.active.serviceWindowExpiresAt)}` : 'Janela encerrada · use um template';
   renderAdminAccess();
