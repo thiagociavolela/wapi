@@ -1,5 +1,10 @@
 import mysql, { type RowDataPacket } from "mysql2/promise";
+import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { config, MYSQL_TIME_ZONE } from "../../config.js";
+
+const require = createRequire(import.meta.url);
+const ffmpegPath = require("ffmpeg-static") as string | null;
 
 const productPool = mysql.createPool({
   host: config.PRODUCT_DB_HOST || "127.0.0.1",
@@ -103,6 +108,22 @@ export function productCaption(product: Product) {
   return [heading, ...(description ? [description] : []), ...tail].join("\n\n").slice(0, 1024);
 }
 
+export function convertProductImageToJpeg(input: Buffer) {
+  return new Promise<Buffer>((resolve, reject) => {
+    if (!ffmpegPath) return reject(new Error("FFmpeg não está disponível para converter a imagem do produto."));
+    const process = spawn(ffmpegPath, [
+      "-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-frames:v", "1",
+      "-vf", "scale='min(1600,iw)':-2", "-q:v", "3", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"
+    ], { windowsHide: true });
+    const output: Buffer[] = []; const errors: Buffer[] = [];
+    process.stdout.on("data", (chunk) => output.push(Buffer.from(chunk)));
+    process.stderr.on("data", (chunk) => errors.push(Buffer.from(chunk)));
+    process.on("error", () => reject(new Error("Não foi possível iniciar a conversão da imagem.")));
+    process.on("close", (code) => code === 0 && output.length ? resolve(Buffer.concat(output)) : reject(new Error(Buffer.concat(errors).toString("utf8") || "Não foi possível converter a imagem do produto.")));
+    process.stdin.end(input);
+  });
+}
+
 export async function downloadProductImage(product: Product) {
   if (!product.imageUrl) throw new Error("Este produto não possui imagem cadastrada.");
   const url = new URL(product.imageUrl);
@@ -111,8 +132,9 @@ export async function downloadProductImage(product: Product) {
   if (!response.ok) throw new Error(`Não foi possível baixar a imagem do produto (${response.status}).`);
   const mimeType = response.headers.get("content-type")?.split(";")[0] || "";
   if (!mimeType.startsWith("image/")) throw new Error("O arquivo cadastrado no produto não é uma imagem válida.");
-  const buffer = Buffer.from(await response.arrayBuffer());
-  if (!buffer.length || buffer.length > 20 * 1024 * 1024) throw new Error("A imagem do produto deve ter no máximo 20 MB.");
-  const extension = mimeType.split("/")[1]?.replace("jpeg", "jpg") || "jpg";
-  return { buffer, mimeType, fileName: `produto-${product.id}.${extension}` };
+  const sourceBuffer = Buffer.from(await response.arrayBuffer());
+  if (!sourceBuffer.length || sourceBuffer.length > 20 * 1024 * 1024) throw new Error("A imagem original do produto deve ter no máximo 20 MB.");
+  const buffer = await convertProductImageToJpeg(sourceBuffer);
+  if (!buffer.length || buffer.length > 5 * 1024 * 1024) throw new Error("A imagem convertida excede o limite de 5 MB do WhatsApp.");
+  return { buffer, mimeType: "image/jpeg", fileName: `produto-${product.id}.jpg` };
 }
