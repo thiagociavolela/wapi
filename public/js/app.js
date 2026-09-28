@@ -637,7 +637,14 @@ $('#conversation-actions').addEventListener('click', async event => {
     if (action === 'toggle-status') {
       if (conversation.status === 'resolved') await api(`/api/conversations/${conversation.id}/open`, { method: 'POST' });
       else await api(`/api/conversations/${conversation.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'resolved' }) });
-      await loadConversations(false); if (state.active?.id === conversation.id) { state.active.status = conversation.status === 'resolved' ? 'open' : 'resolved'; $('#status').value = state.active.status; }
+      await loadConversations(false); if (state.active?.id === conversation.id) {
+        state.active.status = conversation.status === 'resolved' ? 'open' : 'resolved';
+        if (state.active.status === 'resolved') {
+          state.active.assignedUserId = null; state.active.assignedUserName = null;
+          $('#detail-agent').textContent = 'Não atribuído'; renderAdminAccess();
+        }
+        $('#status').value = state.active.status;
+      }
       toast(conversation.status === 'resolved' ? 'Conversa reaberta.' : 'Conversa concluída.');
     }
   } catch (error) { toast(error.message); }

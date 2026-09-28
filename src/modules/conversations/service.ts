@@ -494,7 +494,11 @@ export async function openConversationForAgent(organizationId: string, userId: s
 }
 
 export async function changeStatus(organizationId: string, conversationId: string, status: string) {
-  const [result] = await pool.execute<ResultSetHeader>("UPDATE conversations SET status = ?, resolved_at = IF(? = 'resolved', NOW(3), NULL) WHERE id = ? AND organization_id = ?", [status, status, conversationId, organizationId]);
+  const [result] = await pool.execute<ResultSetHeader>(`UPDATE conversations
+    SET status = ?,
+      resolved_at = IF(? = 'resolved', NOW(3), NULL),
+      assigned_user_id = IF(? = 'resolved', NULL, assigned_user_id)
+    WHERE id = ? AND organization_id = ?`, [status, status, status, conversationId, organizationId]);
   if (result.affectedRows) publish(organizationId, { type: "conversation", conversationId });
   return result.affectedRows > 0;
 }
