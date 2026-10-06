@@ -25,25 +25,33 @@ export function buildTemplateSnapshot(template: TemplateDefinition, parameters: 
   const lines: string[] = [];
   const components: Array<Record<string, unknown>> = [];
   const buttons = structuredClone(template.components.find((component) => component.type === "BUTTONS")?.buttons ?? []);
-  const variableCount = (text = "") => [...text.matchAll(/\{\{(\d+)\}\}/g)].reduce((maximum, match) => Math.max(maximum, Number(match[1])), 0);
+  const variables = (text = "") => {
+    const names = [...new Set([...text.matchAll(/\{\{(\d+|[a-z_][a-z0-9_]*)\}\}/g)].map((match) => match[1]!))];
+    return names.every((name) => /^\d+$/.test(name))
+      ? Array.from({ length: Math.max(0, ...names.map(Number)) }, (_, index) => String(index + 1)) : names;
+  };
   const consume = (count: number) => {
     const values = parameters.slice(cursor, cursor + count);
     cursor += count;
     return values;
   };
-  const render = (text: string, values: string[]) => text.replace(/\{\{(\d+)\}\}/g, (_match, index) => values[Number(index) - 1] ?? `{{${index}}}`);
+  const render = (text: string, values: string[]) => {
+    const names = variables(text);
+    return text.replace(/\{\{(\d+|[a-z_][a-z0-9_]*)\}\}/g, (match, name) => values[names.indexOf(name)] ?? match);
+  };
 
   for (const component of template.components) {
     if (["HEADER", "BODY"].includes(component.type) && typeof component.text === "string") {
-      const values = consume(variableCount(component.text));
+      const names = variables(component.text);
+      const values = consume(names.length);
       lines.push(render(component.text, values));
-      if (values.length) components.push({ type: component.type.toLowerCase(), parameters: values.map((text) => ({ type: "text", text })) });
+      if (values.length) components.push({ type: component.type.toLowerCase(), parameters: values.map((text, index) => ({ type: "text", text, ...(/^\d+$/.test(names[index]!) ? {} : { parameter_name: names[index] }) })) });
     } else if (component.type === "FOOTER" && typeof component.text === "string") {
       lines.push(component.text);
     } else if (component.type === "BUTTONS" && Array.isArray(component.buttons)) {
       component.buttons.forEach((button: Record<string, any>, index: number) => {
         if (button.type !== "URL" || typeof button.url !== "string") return;
-        const count = variableCount(button.url);
+        const count = variables(button.url).length;
         const values = consume(count);
         if (count) {
           components.push({ type: "button", sub_type: "url", index: String(index), parameters: values.map((text) => ({ type: "text", text })) });

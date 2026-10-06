@@ -22,6 +22,21 @@ describe("buildTemplateSnapshot", () => {
     expect(() => buildTemplateSnapshot(template, ["João"])).toThrow("exige 2 parâmetro");
   });
 
+  it("envia variáveis nomeadas e renderiza ocorrências repetidas", () => {
+    const named = { ...template, components: [
+      { type: "HEADER", text: "Oferta para {{empresa}}" },
+      { type: "BODY", text: "Olá {{nome}}, temos novidades para {{nome}}!" }
+    ] };
+    const result = buildTemplateSnapshot(named, ["Qi Tecnologia", "João"]);
+    expect(result.text).toBe("Oferta para Qi Tecnologia\n\nOlá João, temos novidades para João!");
+    expect(result.components).toEqual([
+      { type: "header", parameters: [{ type: "text", text: "Qi Tecnologia", parameter_name: "empresa" }] },
+      { type: "body", parameters: [{ type: "text", text: "João", parameter_name: "nome" }] }
+    ]);
+    expect(result.parameterCount).toBe(2);
+    expect(() => buildTemplateSnapshot(named, [])).toThrow("exige 2 parâmetro");
+  });
+
   it("monta o parâmetro de um botão com URL dinâmica", () => {
     const dynamic = { ...template, components: [...template.components, { type: "BUTTONS", buttons: [{ type: "URL", text: "Pagar", url: "https://example.com/pagar/{{1}}" }] }] };
     const result = buildTemplateSnapshot(dynamic, ["João", "nº 12345", "token-seguro"]);
