@@ -2,9 +2,15 @@ import crypto from "node:crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "../../database/pool.js";
 import { sendTemplate } from "../meta/client.js";
+import { fillContactNameTemplateParameter } from "../conversations/service.js";
 
 type Recipient = { phone: string; name?: string };
 type CampaignInput = { name: string; description?: string; templateName: string; templateLanguage: string; templateComponents: unknown[]; templatePreview?: string; delaySeconds: number; scheduledFor?: Date; recipients: Recipient[]; saveContacts: boolean };
+
+export function personalizeCampaignTemplate(components: unknown[], preview: string, recipientName?: string, profileName?: string, contactName?: string) {
+  const name = recipientName?.trim() || profileName?.trim() || contactName?.trim() || "cliente";
+  return { components: fillContactNameTemplateParameter(components, name), text: preview.replace(/\{\{nome\}\}/g, () => name) };
+}
 
 export function normalizeCampaignPhone(value: string, countryCode = "55") {
   const original = String(value ?? "").trim();
@@ -131,13 +137,17 @@ async function processCampaigns() {
           FROM organizations o LEFT JOIN sla_policies s ON s.organization_id=o.id WHERE o.id=?`, [crypto.randomUUID(), organizationId, contactId, organizationId]);
         const [conversations] = await pool.execute<RowDataPacket[]>("SELECT id FROM conversations WHERE organization_id = ? AND contact_id = ? LIMIT 1", [organizationId, contactId]);
         const conversationId = String(conversations[0]!.id); messageId = crypto.randomUUID();
-        const components = typeof campaign.templateComponents === "string" ? JSON.parse(campaign.templateComponents) : (campaign.templateComponents || []);
+        const [contacts] = await pool.execute<RowDataPacket[]>("SELECT profile_name AS profileName, name FROM contacts WHERE id = ? AND organization_id = ? LIMIT 1", [contactId, organizationId]);
+        const personalized = personalizeCampaignTemplate(
+          typeof campaign.templateComponents === "string" ? JSON.parse(campaign.templateComponents) : (campaign.templateComponents || []),
+          String(campaign.templatePreview ?? `Template: ${campaign.templateName}`), recipient.name, contacts[0]?.profileName, contacts[0]?.name);
+        const components = personalized.components;
         await pool.execute(`INSERT INTO messages (id, organization_id, conversation_id, direction, type, text_body, content, status)
-          VALUES (?, ?, ?, 'outbound', 'template', ?, ?, 'queued')`, [messageId, organizationId, conversationId, campaign.templatePreview ?? `Template: ${campaign.templateName}`, JSON.stringify({ template: campaign.templateName, language: campaign.templateLanguage, components, origin: "campaign", campaignId: campaign.id })]);
+          VALUES (?, ?, ?, 'outbound', 'template', ?, ?, 'queued')`, [messageId, organizationId, conversationId, personalized.text, JSON.stringify({ template: campaign.templateName, language: campaign.templateLanguage, components, origin: "campaign", campaignId: campaign.id })]);
         const result = await sendTemplate(String(recipient.phone), String(campaign.templateName), String(campaign.templateLanguage), components);
         await pool.execute("UPDATE messages SET meta_message_id = ?, status = 'sent', sent_at = NOW(3) WHERE id = ?", [result.messageId, messageId]);
         await pool.execute("UPDATE campaign_recipients SET status = 'sent', message_id = ?, meta_message_id = ?, error_message = NULL, sent_at = NOW(3) WHERE id = ?", [messageId, result.messageId, recipient.id]);
-        await pool.execute("UPDATE conversations SET last_message_preview = ?, last_message_at = NOW(3) WHERE id = ?", [String(campaign.templatePreview ?? `Template: ${campaign.templateName}`).slice(0, 500), conversationId]);
+        await pool.execute("UPDATE conversations SET last_message_preview = ?, last_message_at = NOW(3) WHERE id = ?", [personalized.text.slice(0, 500), conversationId]);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Falha no envio";
         await pool.execute("UPDATE campaign_recipients SET status = 'failed', message_id = ?, error_message = ? WHERE id = ?", [messageId, message, recipient.id]);

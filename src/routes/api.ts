@@ -330,7 +330,7 @@ apiRouter.post(["/campaigns", "/campaigns/create"], requireManager, async (req, 
     const templates = (await listMessageTemplates()).data;
     const template = templates.find((item) => item.status === "APPROVED" && item.name === parsed.data.templateName && item.language === parsed.data.templateLanguage);
     if (!template) return res.status(422).json({ error: "Template não encontrado ou não aprovado pela Meta." });
-    const snapshot = buildTemplateSnapshot(template as any, parsed.data.parameters);
+    const snapshot = buildTemplateSnapshot(template as any, parsed.data.parameters, { autoContactName: true });
     snapshot.components.push(...buildCommerceTemplateComponents(template as any, parsed.data.catalogProductIds, parsed.data.catalogSectionTitle));
     res.status(201).json(await createCampaign(req.auth!.organizationId, req.auth!.id, { ...parsed.data, templateComponents: snapshot.components, templatePreview: snapshot.text }));
   } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Não foi possível criar a campanha." }); }

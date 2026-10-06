@@ -20,7 +20,7 @@ async function approvedTemplates() {
   templateCache = { items, expiresAt: Date.now() + 5 * 60 * 1000 }; return items;
 }
 
-export function buildTemplateSnapshot(template: TemplateDefinition, parameters: string[]) {
+export function buildTemplateSnapshot(template: TemplateDefinition, parameters: string[], options: { autoContactName?: boolean } = {}) {
   let cursor = 0;
   const lines: string[] = [];
   const components: Array<Record<string, unknown>> = [];
@@ -43,7 +43,7 @@ export function buildTemplateSnapshot(template: TemplateDefinition, parameters: 
   for (const component of template.components) {
     if (["HEADER", "BODY"].includes(component.type) && typeof component.text === "string") {
       const names = variables(component.text);
-      const values = consume(names.length);
+      const values = names.map((name) => options.autoContactName && name === "nome" ? "{{nome}}" : consume(1)[0]!);
       lines.push(render(component.text, values));
       if (values.length) components.push({ type: component.type.toLowerCase(), parameters: values.map((text, index) => ({ type: "text", text, ...(/^\d+$/.test(names[index]!) ? {} : { parameter_name: names[index] }) })) });
     } else if (component.type === "FOOTER" && typeof component.text === "string") {
