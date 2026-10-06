@@ -20,6 +20,7 @@ const messageSchema = z.object({
   to: z.string().transform((value) => value.replace(/\D/g, "")).pipe(z.string().regex(/^\d{10,15}$/)),
   contactName: z.string().trim().min(2).max(160).optional(), template: z.string().trim().regex(/^[a-z0-9_]{1,512}$/),
   language: z.string().trim().min(2).max(20).default("pt_BR"), parameters: z.array(z.union([z.string(), z.number()]).transform(String)).max(20).default([]),
+  buttonParameters: z.array(z.union([z.string(), z.number()]).transform(String)).max(20).optional(),
   sendAt: z.iso.datetime({ offset: true }).transform((value) => new Date(value)).optional(), externalId: z.string().trim().min(1).max(190).optional(),
   metadata: z.record(z.string(), z.unknown()).optional()
 });

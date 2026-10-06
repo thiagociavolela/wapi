@@ -3,10 +3,21 @@ vi.mock("../../config.js", () => ({
   config: { META_GRAPH_VERSION: "v26.0", META_PHONE_NUMBER_ID: "phone-id", META_ACCESS_TOKEN: "token", META_WABA_ID: "waba-id" },
   isMetaConfigured: () => true
 }));
-import { sendMedia, sendTypingIndicator } from "./client.js";
+import { sendMedia, sendTemplate, sendTypingIndicator } from "./client.js";
 
 describe("envio de áudio pela Meta", () => {
   afterEach(() => vi.unstubAllGlobals());
+
+  it("preserva o DDI, nome da variável e token separado no payload HTTP da Meta", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: "wamid.template" }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const components = [
+      { type: "body", parameters: [{ type: "text", parameter_name: "nome", text: "Teste de integracao" }] },
+      { type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: "TOKEN_PUBLICO" }] }
+    ];
+    expect(await sendTemplate("5511917080051", "entrega_iniciada_motoboy", "pt_BR", components)).toMatchObject({ messageId: "wamid.template" });
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({ messaging_product: "whatsapp", recipient_type: "individual", to: "5511917080051", type: "template", template: { name: "entrega_iniciada_motoboy", language: { code: "pt_BR" }, components } });
+  });
 
   it("envia gravação OGG como áudio e não como documento ou texto", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: "wamid.audio" }] }), {

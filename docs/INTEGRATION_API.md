@@ -70,7 +70,30 @@ Resposta `202 Accepted`:
 }
 ```
 
-O template precisa estar aprovado na WABA e a quantidade de `parameters` deve corresponder às variáveis do corpo. O gateway consulta e mantém em cache a lista de templates aprovados.
+O template precisa estar aprovado na WABA e no idioma solicitado. O gateway consulta e mantém em cache a lista de templates aprovados. `parameters` fornece as variáveis de texto do cabeçalho e do corpo, na ordem do cadastro; variáveis nomeadas recebem `parameter_name` no payload da Meta.
+
+Para separar os tokens dos botões URL, envie `buttonParameters`, na ordem dos botões dinâmicos:
+
+```json
+{
+  "to": "5511917080051",
+  "contactName": "Teste de integracao",
+  "template": "entrega_iniciada_motoboy",
+  "language": "pt_BR",
+  "parameters": ["Teste de integracao"],
+  "buttonParameters": ["TOKEN_PUBLICO"],
+  "externalId": "IDENTIFICADOR_UNICO",
+  "metadata": {
+    "event": "order.delivery_started",
+    "source": "site",
+    "orderId": "TESTE-WHATSAPP-INICIO"
+  }
+}
+```
+
+As quantidades dos dois arrays são validadas separadamente. `metadata` e `contactName` não substituem os parâmetros do template. Sem `buttonParameters`, permanece compatível o formato legado: um único array `parameters` fornece todas as variáveis, incluindo botões, na ordem dos componentes da Meta.
+
+O job persiste o formato separado como `{ "parameters": [...], "buttonParameters": [...] }` na coluna JSON `parameters`; jobs legados continuam usando arrays. O worker reconstrói o formato separado a partir do job e do cadastro aprovado, sem depender dos metadados. A atualização do endpoint e do worker deve ser implantada em conjunto.
 
 ## Idempotência
 
@@ -92,6 +115,8 @@ Authorization: Bearer {INTEGRATION_API_KEY}
 ```
 
 O retorno inclui o estado do job, `wamid`, tentativas e os horários de envio, entrega e leitura.
+
+HTTP 202 confirma apenas entrada na fila. `status: "sent"` confirma que a Meta aceitou o envio e retornou um `wamid`; a entrega é confirmada por `deliveryStatus: "delivered"` ou `"read"`, recebido pelo webhook. `"failed"` indica falha conclusiva.
 
 ## Cancelar agendamento
 

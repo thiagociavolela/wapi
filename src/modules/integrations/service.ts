@@ -6,7 +6,7 @@ import { listMessageTemplates, sendTemplate } from "../meta/client.js";
 import { publish } from "../realtime/events.js";
 
 export type TemplateDefinition = { name: string; status: string; language: string; category: string; components: Array<Record<string, any>> };
-export type IntegrationMessageInput = { to: string; contactName?: string; template: string; language: string; parameters: string[]; sendAt?: Date; externalId?: string; metadata?: Record<string, unknown> };
+export type IntegrationMessageInput = { to: string; contactName?: string; template: string; language: string; parameters: string[]; buttonParameters?: string[]; sendAt?: Date; externalId?: string; metadata?: Record<string, unknown> };
 let templateCache: { expiresAt: number; items: TemplateDefinition[] } | null = null;
 
 const templateAliases: Record<string, string> = {
@@ -20,8 +20,9 @@ async function approvedTemplates() {
   templateCache = { items, expiresAt: Date.now() + 5 * 60 * 1000 }; return items;
 }
 
-export function buildTemplateSnapshot(template: TemplateDefinition, parameters: string[], options: { autoContactName?: boolean } = {}) {
+export function buildTemplateSnapshot(template: TemplateDefinition, parameters: string[], options: { autoContactName?: boolean; buttonParameters?: string[] } = {}) {
   let cursor = 0;
+  let buttonCursor = 0;
   const lines: string[] = [];
   const components: Array<Record<string, unknown>> = [];
   const buttons = structuredClone(template.components.find((component) => component.type === "BUTTONS")?.buttons ?? []);
@@ -52,7 +53,8 @@ export function buildTemplateSnapshot(template: TemplateDefinition, parameters: 
       component.buttons.forEach((button: Record<string, any>, index: number) => {
         if (button.type !== "URL" || typeof button.url !== "string") return;
         const count = variables(button.url).length;
-        const values = consume(count);
+        const values = options.buttonParameters === undefined ? consume(count) : options.buttonParameters.slice(buttonCursor, buttonCursor + count);
+        buttonCursor += count;
         if (count) {
           components.push({ type: "button", sub_type: "url", index: String(index), parameters: values.map((text) => ({ type: "text", text })) });
           if (buttons[index]) buttons[index].url = render(button.url, values);
@@ -61,6 +63,7 @@ export function buildTemplateSnapshot(template: TemplateDefinition, parameters: 
     }
   }
   if (parameters.length !== cursor) throw new Error(`O template ${template.name} exige ${cursor} parâmetro(s).`);
+  if (options.buttonParameters !== undefined && options.buttonParameters.length !== buttonCursor) throw new Error(`O template ${template.name} exige ${buttonCursor} parâmetro(s) de botão.`);
   return { text: lines.filter(Boolean).join("\n\n"), components, buttons, parameterCount: cursor };
 }
 
@@ -87,7 +90,7 @@ export async function createIntegrationMessage(idempotencyKey: string, input: In
   const templates = await approvedTemplates();
   const definition = resolveApprovedTemplate(templates, input.template, input.language);
   if (!definition) throw new Error("Template não encontrado, não aprovado ou idioma incompatível.");
-  const snapshot = buildTemplateSnapshot(definition, input.parameters);
+  const snapshot = buildTemplateSnapshot(definition, input.parameters, { buttonParameters: input.buttonParameters });
   const templateName = definition.name;
   const scheduledFor = input.sendAt ?? new Date();
   const connection = await pool.getConnection();
@@ -108,15 +111,15 @@ export async function createIntegrationMessage(idempotencyKey: string, input: In
       FROM organizations o LEFT JOIN sla_policies s ON s.organization_id = o.id WHERE o.id = ?`, [conversationId, organizationId, persistedContactId, organizationId]);
     const [conversations] = await connection.execute<RowDataPacket[]>("SELECT id FROM conversations WHERE organization_id = ? AND contact_id = ? LIMIT 1", [organizationId, persistedContactId]);
     const persistedConversationId = String(conversations[0]!.id); const messageId = crypto.randomUUID(); const jobId = crypto.randomUUID();
-    const content = { template: templateName, requestedTemplate: input.template, language: input.language, parameters: input.parameters, components: snapshot.components, buttons: snapshot.buttons, origin: "integration", source: String(input.metadata?.source ?? "site"), externalId: input.externalId ?? null, metadata: input.metadata ?? null, scheduledFor: scheduledFor.toISOString() };
+    const content = { template: templateName, requestedTemplate: input.template, language: input.language, parameters: input.parameters, buttonParameters: input.buttonParameters, components: snapshot.components, buttons: snapshot.buttons, origin: "integration", source: String(input.metadata?.source ?? "site"), externalId: input.externalId ?? null, metadata: input.metadata ?? null, scheduledFor: scheduledFor.toISOString() };
     await connection.execute(`INSERT INTO messages (id, organization_id, conversation_id, direction, type, text_body, content, status)
       VALUES (?, ?, ?, 'outbound', 'template', ?, ?, 'queued')`, [messageId, organizationId, persistedConversationId, snapshot.text, JSON.stringify(content)]);
     await connection.execute(`INSERT INTO integration_message_jobs
       (id, organization_id, conversation_id, message_id, idempotency_key, external_id, phone, template_name, language, parameters, metadata, scheduled_for)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [jobId, organizationId, persistedConversationId, messageId, idempotencyKey, input.externalId ?? null, input.to, templateName, input.language, JSON.stringify(input.parameters), input.metadata ? JSON.stringify(input.metadata) : null, scheduledFor]);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [jobId, organizationId, persistedConversationId, messageId, idempotencyKey, input.externalId ?? null, input.to, templateName, input.language, JSON.stringify(input.buttonParameters === undefined ? input.parameters : { parameters: input.parameters, buttonParameters: input.buttonParameters }), input.metadata ? JSON.stringify(input.metadata) : null, scheduledFor]);
     await connection.execute("UPDATE conversations SET last_message_preview = ?, last_message_at = NOW(3) WHERE id = ?", [snapshot.text.slice(0, 500), persistedConversationId]);
     await connection.execute(`INSERT INTO audit_logs (organization_id, action, entity_type, entity_id, metadata) VALUES (?, 'integration.message.created', 'message', ?, ?)`, [organizationId, messageId, JSON.stringify({ idempotencyKey, template: templateName, requestedTemplate: input.template, externalId: input.externalId ?? null })]);
-    await connection.commit(); publish(organizationId, { type: "message", direction: "outbound", conversationId: persistedConversationId }); void processJobs();
+    await connection.commit(); publish(organizationId, { type: "message", direction: "outbound", conversationId: persistedConversationId }); void processJobs(jobId);
     return { id: jobId, status: scheduledFor.getTime() > Date.now() + 1000 ? "scheduled" : "queued", messageId, conversationId: persistedConversationId, scheduledFor, duplicate: false };
   } catch (error: any) {
     await connection.rollback();
@@ -146,23 +149,34 @@ export async function cancelIntegrationMessage(id: string) {
   return result.affectedRows > 0;
 }
 
+async function buildJobComponents(job: RowDataPacket, stored: unknown, content: any) {
+  const parameters = Array.isArray(stored) ? stored : (stored as any)?.parameters;
+  const buttonParameters = Array.isArray(stored) ? content?.buttonParameters : (stored as any)?.buttonParameters;
+  if (!Array.isArray(parameters) || !parameters.every((value) => typeof value === "string" || typeof value === "number") ||
+      (buttonParameters !== undefined && (!Array.isArray(buttonParameters) || !buttonParameters.every((value: unknown) => typeof value === "string" || typeof value === "number")))) {
+    throw new Error("Parâmetros persistidos do template inválidos.");
+  }
+  const definition = resolveApprovedTemplate(await approvedTemplates(), String(job.templateName), String(job.language));
+  if (!definition) throw new Error("Template não encontrado, não aprovado ou idioma incompatível.");
+  return buildTemplateSnapshot(definition, parameters.map(String), { buttonParameters: buttonParameters?.map(String) }).components;
+}
+
 let processing = false; let worker: NodeJS.Timeout | undefined;
-async function processJobs() {
+export async function processJobs(jobId?: string) {
   if (processing) return; processing = true;
   try {
     const [rows] = await pool.execute<RowDataPacket[]>(`SELECT j.id, j.organization_id AS organizationId, j.conversation_id AS conversationId,
       j.message_id AS messageId, j.phone, j.template_name AS templateName, j.language, j.parameters, j.attempts, m.content
       FROM integration_message_jobs j JOIN messages m ON m.id = j.message_id
-      WHERE j.status = 'pending' AND j.scheduled_for <= NOW(3) ORDER BY j.scheduled_for LIMIT 20`);
+      WHERE j.status = 'pending' AND j.scheduled_for <= NOW(3) ${jobId ? "AND j.id = ?" : ""} ORDER BY j.scheduled_for LIMIT 20`, jobId ? [jobId] : []);
     for (const job of rows) {
       const [claim] = await pool.execute<ResultSetHeader>("UPDATE integration_message_jobs SET status = 'processing', attempts = attempts + 1 WHERE id = ? AND status = 'pending'", [job.id]);
       if (!claim.affectedRows) continue;
       try {
         const parameters = typeof job.parameters === "string" ? JSON.parse(job.parameters) : job.parameters;
         const content = typeof job.content === "string" ? JSON.parse(job.content) : job.content;
-        const components = Array.isArray(content?.components)
-          ? content.components
-          : parameters.length ? [{ type: "body", parameters: parameters.map((text: string) => ({ type: "text", text })) }] : [];
+        // The job parameters are authoritative; a stale snapshot may omit the body.
+        const components = await buildJobComponents(job, parameters, content);
         const result = await sendTemplate(String(job.phone), String(job.templateName), String(job.language), components);
         await pool.execute("UPDATE messages SET meta_message_id = ?, status = 'sent', sent_at = NOW(3) WHERE id = ?", [result.messageId, job.messageId]);
         await pool.execute("UPDATE integration_message_jobs SET status = 'sent', processed_at = NOW(3), error_message = NULL WHERE id = ?", [job.id]);
