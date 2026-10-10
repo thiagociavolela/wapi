@@ -2,6 +2,12 @@ import { api } from './api.js';
 
 const $ = (selector) => document.querySelector(selector);
 const SYSTEM_TIME_ZONE = 'America/Sao_Paulo';
+const selectedConversations = new Set();
+let selectionMode = false;
+let bulkUpdating = false;
+let conversationPress = null;
+let suppressedConversationClick = null;
+
 const state = { user: null, users: [], teams: [], quickReplies: [], quickReplyMatches: [], quickReplyIndex: -1, templates: [], tags: [], contacts: [], conversations: [], messages: [], messagesHasMore: false, historySearchTerm: '', historySearchMatches: [], historySearchIndex: -1, scheduledMessages: [], pendingMessages: [], pastedFiles: [], pastedFileIndex: 0, pasteObjectUrls: [], active: null, status: 'new', assignedToMe: false, contactStatus: '', contactPage: 1, contactPages: 1, contactTotal: 0, searchTimer: null, contactSearchTimer: null, replyTo: null, actionMessage: null, contextConversation: null, assignmentConversationId: null, scheduleConversationId: null, scheduleEditingId: null, emojiMode: 'insert', recorder: null, typingTimer: null, pendingOpenConversationId: null, soundEnabled: localStorage.getItem('chat.notificationSound') !== 'off', notificationAudio: null };
 
 function escapeHtml(value = '') { const node = document.createElement('div'); node.textContent = String(value); return node.innerHTML; }
@@ -96,8 +102,8 @@ async function loadConversations(preserve = true) {
 function renderConversations() {
   const list = $('#conversation-list'); const scrollTop = list.scrollTop;
   const html = state.conversations.length ? state.conversations.map(item => `
-    <button class="conversation ${state.active?.id === item.id ? 'active' : ''}" data-render-key="conversation:${item.id}" data-id="${item.id}">
-      <span class="avatar">${escapeHtml(initials(displayName(item)))}</span><span class="conversation-copy">
+    <button class="conversation ${state.active?.id === item.id ? 'active' : ''} ${selectedConversations.has(item.id) ? 'selected' : ''}" aria-pressed="${selectedConversations.has(item.id)}" data-render-key="conversation:${item.id}" data-id="${item.id}">
+      ${selectionMode ? `<span class="conversation-selection" aria-hidden="true">${selectedConversations.has(item.id) ? '\u2713' : ''}</span>` : ''}<span class="avatar">${escapeHtml(initials(displayName(item)))}</span><span class="conversation-copy">
         <span class="conversation-top"><strong>${escapeHtml(displayName(item))}</strong><time>${time(item.lastMessageAt)}</time></span>
         ${item.status === 'open' && item.assignedUserName ? `<span class="conversation-assignment">Em atendimento: <strong>${escapeHtml(item.assignedUserName)}</strong></span>` : ''}
         <span class="conversation-bottom"><span><i class="status-dot ${escapeHtml(item.status)}"></i>${escapeHtml(item.lastMessagePreview || 'Nova conversa')}</span>${item.unreadCount ? `<b>${item.unreadCount}</b>` : ''}</span>
@@ -105,6 +111,87 @@ function renderConversations() {
     </button>`).join('') : '<div class="empty" data-render-key="empty">Nenhuma conversa encontrada.</div>';
   reconcileList(list, html); list.scrollTop = scrollTop;
 }
+
+function renderBulkSelection() {
+  $('#bulk-conversation-actions').classList.toggle('hidden', !selectionMode);
+  $('#bulk-selection-count').textContent = `${selectedConversations.size} selecionada${selectedConversations.size === 1 ? '' : 's'}`;
+  $('#bulk-apply').disabled = bulkUpdating || !selectedConversations.size;
+  $('#bulk-apply').textContent = bulkUpdating ? 'Aplicando\u2026' : 'Aplicar';
+  for (const id of ['bulk-cancel', 'bulk-select-all', 'bulk-status']) $(`#${id}`).disabled = bulkUpdating;
+  renderConversations();
+}
+function toggleConversationSelection(id) {
+  if (bulkUpdating) return;
+  selectionMode = true;
+  if (selectedConversations.has(id)) selectedConversations.delete(id); else selectedConversations.add(id);
+  renderBulkSelection();
+}
+function cancelConversationPress() {
+  if (conversationPress) clearTimeout(conversationPress.timer);
+  conversationPress = null;
+}
+const conversationList = $('#conversation-list');
+conversationList.addEventListener('pointerdown', event => {
+  cancelConversationPress();
+  suppressedConversationClick = null;
+  const button = event.target.closest('[data-id]');
+  if (!button || event.button !== 0 || !event.isPrimary || selectionMode || bulkUpdating) return;
+  const press = { id: button.dataset.id, pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+  press.timer = setTimeout(() => {
+    suppressedConversationClick = press.id;
+    closeConversationActions();
+    toggleConversationSelection(press.id);
+  }, 550);
+  conversationPress = press;
+});
+document.addEventListener('pointermove', event => {
+  if (conversationPress && event.pointerId === conversationPress.pointerId && Math.hypot(event.clientX - conversationPress.x, event.clientY - conversationPress.y) > 10) cancelConversationPress();
+});
+for (const name of ['pointerup', 'pointercancel']) document.addEventListener(name, cancelConversationPress);
+conversationList.addEventListener('scroll', cancelConversationPress, { passive: true });
+window.addEventListener('blur', cancelConversationPress);
+$('#bulk-cancel').addEventListener('click', () => {
+  if (bulkUpdating) return;
+  selectedConversations.clear(); selectionMode = false; renderBulkSelection();
+});
+$('#bulk-select-all').addEventListener('click', () => {
+  if (bulkUpdating) return;
+  state.conversations.forEach(item => selectedConversations.add(item.id)); renderBulkSelection();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && selectionMode && !bulkUpdating) $('#bulk-cancel').click();
+  const button = event.target.closest?.('#conversation-list [data-id]');
+  if (button && event.key === ' ' && !selectionMode) { event.preventDefault(); toggleConversationSelection(button.dataset.id); }
+});
+$('#bulk-apply').addEventListener('click', async () => {
+  if (bulkUpdating || !selectedConversations.size) return;
+  const ids = [...selectedConversations]; const status = $('#bulk-status').value;
+  bulkUpdating = true; renderBulkSelection();
+  let updated = 0; let failure = '';
+  try {
+    // Limit concurrent requests and preserve failed selections for retry.
+    for (let offset = 0; offset < ids.length; offset += 5) {
+      await Promise.all(ids.slice(offset, offset + 5).map(async id => {
+        try {
+          const result = await api(`/api/conversations/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
+          if (!result?.ok) throw new Error('Conversa n\u00e3o encontrada.');
+          selectedConversations.delete(id); updated++;
+          if (state.active?.id === id) {
+            state.active.status = status;
+            if (status === 'resolved') { state.active.assignedUserId = null; state.active.assignedUserName = null; }
+            $('#status').value = status;
+          }
+        } catch (error) { failure = error.message; }
+      }));
+    }
+    selectionMode = selectedConversations.size > 0;
+    await loadConversations();
+  } catch (error) { failure = error.message; }
+  finally {
+    bulkUpdating = false; renderBulkSelection();
+    toast(`${updated} conversa${updated === 1 ? '' : 's'} atualizada${updated === 1 ? '' : 's'}.${failure ? ` ${selectedConversations.size ? `${selectedConversations.size} n\u00e3o atualizada(s). ` : ''}${failure}` : ''}`);
+  }
+});
 
 async function openConversation(id) {
   closeConversationSearch();
@@ -604,6 +691,7 @@ function updateScheduleTemplatePreview() {
 
 $('#conversation-list').addEventListener('contextmenu', event => {
   const button = event.target.closest('[data-id]'); if (!button) return; event.preventDefault();
+  if (selectionMode || conversationPress || suppressedConversationClick) return;
   const conversation = state.conversations.find(item => item.id === button.dataset.id); if (conversation) openConversationActions(conversation, event.clientX, event.clientY);
 });
 
@@ -673,6 +761,8 @@ window.addEventListener('blur', closeConversationActions);
 
 $('#conversation-list').addEventListener('click', event => {
   const button = event.target.closest('[data-id]'); if (!button) return;
+  if (suppressedConversationClick === button.dataset.id) { suppressedConversationClick = null; event.preventDefault(); return; }
+  if (selectionMode) { event.preventDefault(); toggleConversationSelection(button.dataset.id); return; }
   const conversation = state.conversations.find(item => item.id === button.dataset.id);
   if (['admin', 'supervisor'].includes(state.user.role)) { openConversation(button.dataset.id); return; }
   if (conversation?.status === 'open' && conversation.assignedUserId && conversation.assignedUserId !== state.user.id) {
