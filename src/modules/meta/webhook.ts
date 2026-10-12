@@ -5,6 +5,7 @@ import { pool } from "../../database/pool.js";
 import { publish } from "../realtime/events.js";
 import { defaultOrganizationId } from "../conversations/service.js";
 import { getCatalogProduct } from "./client.js";
+import { carouselContactText } from '../campaigns/carousel.js';
 
 type Json = Record<string, any>;
 
@@ -171,7 +172,7 @@ async function markEventProcessed(connection: PoolConnection, key: string) {
 
 export function extractText(message: Json): string | null {
   if (message.type === "text") return message.text?.body ?? null;
-  if (message.type === "button") return message.button?.text ?? null;
+  if (message.type === "button") return carouselContactText(message.button?.payload) ?? message.button?.text ?? null;
   if (message.type === "interactive") return message.interactive?.button_reply?.title ?? message.interactive?.list_reply?.title ?? null;
   if (["image", "video", "document"].includes(message.type)) return message[message.type]?.caption ?? null;
   if (message.type === "location") return message.location?.name ?? message.location?.address ?? "Localização";

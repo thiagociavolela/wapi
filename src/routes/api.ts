@@ -7,14 +7,24 @@ import { cancelScheduledMessage, createScheduledMessage, listScheduledMessages, 
 import { convertVoiceToOgg } from "../modules/conversations/audio.js";
 import { subscribe } from "../modules/realtime/events.js";
 import { isMetaConfigured } from "../config.js";
-import { listMessageTemplates } from "../modules/meta/client.js";
+import { listMessageTemplates, editMessageTemplate } from "../modules/meta/client.js";
+import { editCarouselDefinition } from '../modules/campaigns/template-editor.js';
 import { createTeam, createUser, getDashboard, getIntegrationDashboard, getSlaPolicy, listManagedUsers, listTeams, updateSlaPolicy, updateTeam, updateUser } from "../modules/management/service.js";
-import { changeCampaignStatus, createCampaign, getCampaign, listCampaigns, parseCampaignContacts } from "../modules/campaigns/service.js";
+import { changeCampaignStatus, createCampaign, deleteCompletedCampaign, getCampaign, listCampaigns, parseCampaignContacts } from "../modules/campaigns/service.js";
+import { campaignDashboard, campaignReport, campaignExport, csvCell } from "../modules/campaigns/dashboard.js";
+import { buildCarouselComponents, CAROUSEL_TEMPLATE_NAME } from '../modules/campaigns/carousel.js';
+import { carouselImagePath,storeCarouselImage } from '../modules/campaigns/carousel-media.js';
 import { buildCommerceTemplateComponents, buildTemplateSnapshot } from "../modules/integrations/service.js";
 import { downloadProductImage, getProduct, productCaption, productDescriptionMessages, searchProducts } from "../modules/products/service.js";
 import { createPaymentLink, deletePaymentLink, getPaymentLink, listPaymentLinks } from "../modules/payments/service.js";
 
 export const apiRouter = Router();
+const carouselCardsSchema=z.array(z.object({mediaId:z.string().regex(/^\d+$/),parameters:z.array(z.string().trim().min(1).max(160)).max(10),url:z.string().url().max(2000),productId:z.string().max(64).optional(),title:z.string().max(80).optional()})).max(10).default([]);
+async function requireCarouselAssetAccess(req: import('express').Request,res: import('express').Response,next: import('express').NextFunction) {
+  if(!req.params.id)return requireManager(req,res,next);
+  if(!await adminCanSendConversation(req.auth!.organizationId,req.auth!.id,String(req.params.id)))return res.status(403).json({error:'Assuma a conversa antes de preparar o carrossel.'});
+  next();
+}
 const scheduledMessageSchema = z.discriminatedUnion("messageType", [
   z.object({ messageType: z.literal("text"), body: z.string().trim().min(1).max(4096), scheduledFor: z.coerce.date() }),
   z.object({ messageType: z.literal("template"), body: z.string().trim().min(1).max(4096), scheduledFor: z.coerce.date(),
@@ -122,7 +132,7 @@ apiRouter.get("/templates", async (_req, res) => {
 apiRouter.get("/products", async (req, res) => {
   const parsed = z.string().trim().min(1).max(120).safeParse(req.query.search);
   if (!parsed.success) return res.json({ items: [] });
-  try { res.json({ items: await searchProducts(parsed.data) }); }
+  try { res.json({ items: await searchProducts(parsed.data,req.query.active==='true') }); }
   catch (error) { res.status(502).json({ error: error instanceof Error ? error.message : "Falha ao pesquisar produtos." }); }
 });
 apiRouter.get("/products/:productId", async (req, res) => {
@@ -247,11 +257,22 @@ apiRouter.post("/conversations/:id/templates", requireAdminAssignment, async (re
   const parsed = z.object({
     name: z.string().trim().min(1).max(512).regex(/^[a-z0-9_]+$/),
     language: z.string().trim().min(2).max(20).default("pt_BR"),
-    components: z.array(z.unknown()).default([])
+    components: z.array(z.unknown()).default([]),carouselCards:carouselCardsSchema
   }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Informe um template válido e seu idioma." });
   try {
-    res.status(201).json(await sendAgentTemplate(req.auth!.organizationId, req.auth!.id, String(req.params.id), parsed.data.name, parsed.data.language, parsed.data.components));
+    let components=parsed.data.components;let preview: string|undefined;
+    if(parsed.data.carouselCards.length||parsed.data.name===CAROUSEL_TEMPLATE_NAME||components.some((component:any)=>component?.type?.toLowerCase()==='carousel')){
+      if(!await adminCanSendConversation(req.auth!.organizationId,req.auth!.id,String(req.params.id)))return res.status(403).json({error:'Assuma a conversa antes de enviar o carrossel.'});
+      const template=(await listMessageTemplates()).data.find(item=>item.name===parsed.data.name&&item.language===parsed.data.language&&item.status==='APPROVED');
+      if(!template)return res.status(422).json({error:'O modelo de carrossel não está aprovado ou disponível.'});
+      for(const card of parsed.data.carouselCards)await carouselImagePath(req.auth!.organizationId,card.mediaId);
+      components=[...components.filter((component:any)=>component?.type?.toLowerCase()!=='carousel'),...buildCarouselComponents(template as any,parsed.data.carouselCards)];
+      const body=String(template.components?.find((component:any)=>component.type==='BODY')?.text||'');
+      const parameters=(components.find((component:any)=>component?.type==='body') as any)?.parameters||[];
+      preview=body.replace(/\{\{(\d+|[a-z_][a-z0-9_]*)\}\}/g,(_:string,name:string)=>parameters[/^\d+$/.test(name)?Number(name)-1:parameters.findIndex((parameter:any)=>parameter.parameter_name===name)]?.text||'');
+    }
+    res.status(201).json(await sendAgentTemplate(req.auth!.organizationId, req.auth!.id, String(req.params.id), parsed.data.name, parsed.data.language, components,preview));
   } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar template." }); }
 });
 apiRouter.patch("/conversations/:id/contact", async (req, res) => {
@@ -306,6 +327,85 @@ apiRouter.put("/management/sla", requireManager, async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: "Política de SLA inválida." });
   await updateSlaPolicy(req.auth!.organizationId, parsed.data.firstResponseMinutes, parsed.data.resolutionMinutes); res.json({ ok: true });
 });
+apiRouter.get('/campaigns/carousel/template', requireManager, async (_req,res)=>{
+  try {
+    const template=(await listMessageTemplates()).data.find(item=>item.name===CAROUSEL_TEMPLATE_NAME);
+    res.json({name:CAROUSEL_TEMPLATE_NAME,status:template?.status||'NOT_CREATED'});
+  } catch(error){res.status(502).json({error:error instanceof Error?error.message:'Não foi possível consultar o modelo.'});}
+});
+apiRouter.get('/campaigns/carousel/template/edit', requireAdmin, async (_req,res)=>{
+  try {
+    const template=(await listMessageTemplates()).data.find(item=>item.name===CAROUSEL_TEMPLATE_NAME&&item.language==='pt_BR');
+    if(!template)return res.status(404).json({error:'Modelo de carrossel não encontrado.'});
+    res.json({template});
+  }catch(error){res.status(502).json({error:error instanceof Error?error.message:'Não foi possível consultar o modelo.'});}
+});
+apiRouter.post('/campaigns/carousel/template/edit', requireAdmin, async (req,res)=>{
+  const parsed=z.object({body:z.string().trim().min(1).max(1024),cardBodies:z.array(z.string().trim().min(1).max(160)).min(2).max(10),urlLabel:z.string().trim().min(1).max(25),replyLabel:z.string().trim().min(1).max(25)}).safeParse(req.body);
+  if(!parsed.success)return res.status(400).json({error:'Preencha os textos e os botões dentro dos limites indicados.'});
+  try {
+    const template=(await listMessageTemplates()).data.find(item=>item.name===CAROUSEL_TEMPLATE_NAME&&item.language==='pt_BR');
+    if(!template)return res.status(404).json({error:'Modelo não encontrado.'});
+    if(!['APPROVED','REJECTED'].includes(template.status))return res.status(409).json({error:'Aguarde a análise atual da Meta antes de editar novamente.'});
+    const components=editCarouselDefinition(template.components,parsed.data);
+    const result=await editMessageTemplate(template.id,components);
+    if(!result.success)throw new Error('A Meta não confirmou a alteração. Atualize os modelos para consultar o estado.');
+    res.json({status:'PENDING',message:'Alterações enviadas para análise da Meta.'});
+  }catch(error){res.status(422).json({error:error instanceof Error?error.message:'Não foi possível enviar para aprovação.'});}
+});
+apiRouter.post(['/campaigns/carousel/media','/conversations/:id/carousel/media'], requireCarouselAssetAccess, mediaUpload.single('file'), async (req,res)=>{
+  if(!req.file||!req.file.mimetype.startsWith('image/'))return res.status(400).json({error:'Selecione uma imagem.'});
+  try{res.json(await storeCarouselImage(req.auth!.organizationId,req.file.buffer));}
+  catch(error){res.status(422).json({error:error instanceof Error?error.message:'Não foi possível enviar a imagem.'});}
+});
+apiRouter.post(['/campaigns/carousel/product-media','/conversations/:id/carousel/product-media'], requireCarouselAssetAccess, async (req,res)=>{
+  const parsed=z.object({productId:z.coerce.number().int().positive()}).safeParse(req.body);
+  if(!parsed.success)return res.status(400).json({error:'Produto inválido.'});
+  try{
+    const product=await getProduct(parsed.data.productId);
+    if(!product||!product.active)return res.status(404).json({error:'Produto não encontrado ou inativo.'});
+    const image=await downloadProductImage(product,true);
+    res.json({...await storeCarouselImage(req.auth!.organizationId,image.buffer,true),product});
+  }catch(error){res.status(422).json({error:error instanceof Error?error.message:'Não foi possível preparar o produto.'});}
+});
+apiRouter.get('/campaigns/carousel/media/:mediaId', async (req,res)=>{
+  try{res.type('image/jpeg').sendFile(await carouselImagePath(req.auth!.organizationId,String(req.params.mediaId)));}
+  catch{res.status(404).json({error:'Imagem não encontrada.'});}
+});
+const campaignFilters = z.object({
+  search: z.string().trim().max(160).optional(),
+  status: z.enum(['draft','scheduled','running','paused','completed','cancelled']).optional(),
+  from: z.iso.date().optional(), to: z.iso.date().optional(),
+  page: z.coerce.number().int().min(1).max(100000).default(1)
+}).refine(value=>!value.from||!value.to||value.from<=value.to,{message:'A data inicial deve ser anterior à final.'});
+apiRouter.get('/campaigns/dashboard', requireManager, async (req,res) => {
+  const parsed=campaignFilters.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({error:'Filtros inválidos.'});
+  res.json(await campaignDashboard(req.auth!.organizationId,parsed.data));
+});
+apiRouter.get('/campaigns/:id/report', requireManager, async (req,res) => {
+  const parsed=z.object({search:z.string().trim().max(160).optional(),status:z.enum(['pending','processing','sent','delivered','read','failed','cancelled']).optional(),page:z.coerce.number().int().min(1).max(100000).default(1)}).safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({error:'Filtros inválidos.'});
+  const report=await campaignReport(req.auth!.organizationId,String(req.params.id),parsed.data);
+  if (!report) return res.status(404).json({error:'Campanha não encontrada.'});
+  res.json(report);
+});
+apiRouter.get('/campaigns/:id/export', requireManager, async (req,res) => {
+  const campaign=await getCampaign(req.auth!.organizationId,String(req.params.id));
+  if (!campaign) return res.status(404).json({error:'Campanha não encontrada.'});
+  const rows=await campaignExport(req.auth!.organizationId,String(req.params.id),req.query.failed==='true');
+  if (req.query.format==='json') return res.json({items:rows});
+  const keys=['name','phone','status','errorMessage','sentAt','deliveredAt','readAt'];
+  const csv='\uFEFF'+['Nome;Telefone;Status;Erro;Enviado em (UTC);Entregue em (UTC);Lido em (UTC)',...rows.map(row=>keys.map(key=>csvCell(row[key])).join(';'))].join('\r\n');
+  res.setHeader('Content-Disposition','attachment; filename="campanha.csv"');
+  res.type('text/csv').send(csv);
+});
+apiRouter.delete('/campaigns/:id',requireAdmin,async(req,res)=>{
+  const id=z.string().uuid().safeParse(req.params.id);
+  if(!id.success)return res.status(400).json({error:'Campanha inválida.'});
+  if(!await deleteCompletedCampaign(req.auth!.organizationId,id.data))return res.status(409).json({error:'A campanha não existe ou ainda não está concluída.'});
+  res.json({ok:true});
+});
 apiRouter.get("/campaigns", requireManager, async (req, res) => res.json({ items: await listCampaigns(req.auth!.organizationId) }));
 apiRouter.get("/campaigns/:id", requireManager, async (req, res) => {
   const item = await getCampaign(req.auth!.organizationId, String(req.params.id));
@@ -320,7 +420,9 @@ apiRouter.post(["/campaigns", "/campaigns/create"], requireManager, async (req, 
   const parsed = z.object({
     name: z.string().trim().min(2).max(160), description: z.string().trim().max(500).optional(),
     templateName: z.string().trim().min(1).max(512), templateLanguage: z.string().trim().min(2).max(20),
-    parameters: z.array(z.string().max(1024)).max(30).default([]), catalogProductIds: z.array(z.string().trim().min(1).max(128)).max(30).default([]),
+    parameters: z.array(z.string().max(1024)).max(30).default([]),
+    carouselCards: carouselCardsSchema,
+    catalogProductIds: z.array(z.string().trim().min(1).max(128)).max(30).default([]),
     catalogSectionTitle: z.string().trim().min(1).max(24).default("Produtos"), delaySeconds: z.number().int().min(1).max(300),
     scheduledFor: z.coerce.date().optional(), recipients: z.array(z.object({ phone: z.string().max(32), name: z.string().max(160).optional() })).min(1).max(5000),
     saveContacts: z.boolean().default(false)
@@ -331,6 +433,8 @@ apiRouter.post(["/campaigns", "/campaigns/create"], requireManager, async (req, 
     const template = templates.find((item) => item.status === "APPROVED" && item.name === parsed.data.templateName && item.language === parsed.data.templateLanguage);
     if (!template) return res.status(422).json({ error: "Template não encontrado ou não aprovado pela Meta." });
     const snapshot = buildTemplateSnapshot(template as any, parsed.data.parameters, { autoContactName: true });
+    for (const card of parsed.data.carouselCards) await carouselImagePath(req.auth!.organizationId,card.mediaId);
+    snapshot.components.push(...buildCarouselComponents(template as any,parsed.data.carouselCards));
     snapshot.components.push(...buildCommerceTemplateComponents(template as any, parsed.data.catalogProductIds, parsed.data.catalogSectionTitle));
     res.status(201).json(await createCampaign(req.auth!.organizationId, req.auth!.id, { ...parsed.data, templateComponents: snapshot.components, templatePreview: snapshot.text }));
   } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Não foi possível criar a campanha." }); }

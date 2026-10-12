@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "../../database/pool.js";
+import { refreshCarouselImages } from '../campaigns/carousel-media.js';
 import { publish } from "../realtime/events.js";
 import { downloadMedia, sendMedia, sendReaction, sendTemplate, sendText, sendTypingIndicator, uploadMedia } from "../meta/client.js";
 
@@ -222,19 +223,20 @@ export async function reactToMessage(organizationId: string, userId: string, con
   publish(organizationId, { type: "reaction", conversationId, messageId }); return { ok: true };
 }
 
-export async function sendAgentTemplate(organizationId: string, userId: string, conversationId: string, name: string, language: string, components: unknown[]) {
+export async function sendAgentTemplate(organizationId: string, userId: string, conversationId: string, name: string, language: string, components: unknown[],templateText?:string) {
   const [rows] = await pool.execute<RowDataPacket[]>(`SELECT ct.wa_id AS waId, COALESCE(ct.name, ct.profile_name, ct.phone) AS contactName
     FROM conversations c JOIN contacts ct ON ct.id = c.contact_id
     WHERE c.id = ? AND c.organization_id = ? LIMIT 1`, [conversationId, organizationId]);
   const conversation = rows[0];
   if (!conversation) throw new Error("Conversa não encontrada.");
   components = fillContactNameTemplateParameter(components, String(conversation.contactName));
+  components = await refreshCarouselImages(organizationId,components);
   const id = crypto.randomUUID();
-  const preview = `Template: ${name}`;
+  const preview = templateText ? templateText.replace(/\{\{nome\}\}/g,()=>String(conversation.contactName)) : `Template: ${name}`;
   await pool.execute(`INSERT INTO messages
     (id, organization_id, conversation_id, direction, type, text_body, content, status, sent_by_user_id)
     VALUES (?, ?, ?, 'outbound', 'template', ?, ?, 'queued', ?)`,
-    [id, organizationId, conversationId, preview, JSON.stringify({ name, language, components }), userId]);
+    [id, organizationId, conversationId, preview, JSON.stringify({ name, template:name, language, components }), userId]);
   try {
     const result = await sendTemplate(String(conversation.waId), name, language, components);
     await pool.execute("UPDATE messages SET meta_message_id = ?, status = 'sent', sent_at = NOW(3) WHERE id = ?", [result.messageId, id]);
@@ -255,7 +257,7 @@ export function fillContactNameTemplateParameter(components: unknown[], contactN
     return { ...value, parameters: value.parameters.map((parameter) => {
       if (!parameter || typeof parameter !== "object") return parameter;
       const item = parameter as Record<string, unknown>;
-      return String(item.parameter_name ?? "").toLowerCase() === "nome" ? { ...item, text: contactName } : parameter;
+      return String(item.parameter_name ?? "").toLowerCase() === "nome" || item.text === '{{nome}}' ? { ...item, text: contactName } : parameter;
     }) };
   });
 }

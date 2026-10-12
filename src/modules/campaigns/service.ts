@@ -3,6 +3,7 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "../../database/pool.js";
 import { sendTemplate } from "../meta/client.js";
 import { fillContactNameTemplateParameter } from "../conversations/service.js";
+import { refreshCarouselImages } from './carousel-media.js';
 
 type Recipient = { phone: string; name?: string };
 type CampaignInput = { name: string; description?: string; templateName: string; templateLanguage: string; templateComponents: unknown[]; templatePreview?: string; delaySeconds: number; scheduledFor?: Date; recipients: Recipient[]; saveContacts: boolean };
@@ -77,6 +78,11 @@ export async function createCampaign(organizationId: string, userId: string, inp
   } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
 }
 
+export async function deleteCompletedCampaign(organizationId: string,id: string) {
+  const [result]=await pool.execute<ResultSetHeader>("DELETE FROM campaigns WHERE id=? AND organization_id=? AND status='completed'",[id,organizationId]);
+  return result.affectedRows>0;
+}
+
 export async function listCampaigns(organizationId: string) {
   const [rows] = await pool.execute<RowDataPacket[]>(`SELECT c.id, c.name, c.description, c.template_name AS templateName, c.template_language AS templateLanguage,
     c.delay_seconds AS delaySeconds, c.scheduled_for AS scheduledFor, c.status, c.created_at AS createdAt, u.name AS createdByName,
@@ -141,7 +147,7 @@ async function processCampaigns() {
         const personalized = personalizeCampaignTemplate(
           typeof campaign.templateComponents === "string" ? JSON.parse(campaign.templateComponents) : (campaign.templateComponents || []),
           String(campaign.templatePreview ?? `Template: ${campaign.templateName}`), recipient.name, contacts[0]?.profileName, contacts[0]?.name);
-        const components = personalized.components;
+        const components = await refreshCarouselImages(organizationId,personalized.components);
         await pool.execute(`INSERT INTO messages (id, organization_id, conversation_id, direction, type, text_body, content, status)
           VALUES (?, ?, ?, 'outbound', 'template', ?, ?, 'queued')`, [messageId, organizationId, conversationId, personalized.text, JSON.stringify({ template: campaign.templateName, language: campaign.templateLanguage, components, origin: "campaign", campaignId: campaign.id })]);
         const result = await sendTemplate(String(recipient.phone), String(campaign.templateName), String(campaign.templateLanguage), components);

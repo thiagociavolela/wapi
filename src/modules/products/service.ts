@@ -28,6 +28,7 @@ export interface Product {
   discount: string;
   imageUrl: string;
   active: boolean;
+  productUrl?: string;
 }
 
 function ensureConfigured() {
@@ -64,17 +65,24 @@ function mapProduct(row: RowDataPacket): Product {
     price: String(row.preco ?? ""),
     discount: String(row.desconto ?? ""),
     imageUrl: imageUrl(row.imagem),
-    active: Number(row.status) === 0
+    active: Number(row.status) === 0,
+    productUrl: row.slug ? `https://providafarma.com/produto/${encodeURIComponent(String(row.slug))}` : ''
   };
 }
 
-const PRODUCT_FIELDS = "id, nome, desc_curta, descricao, preco, desconto, imagem, status";
+const PRODUCT_FIELDS = "id, nome, desc_curta, descricao, preco, desconto, imagem, status, slug";
 
-export async function searchProducts(search: string) {
+export async function searchProducts(search: string, activeOnly = false) {
   ensureConfigured();
   const term = search.trim().slice(0, 120);
   if (!term) return [];
-  const [rows] = await productPool.execute<RowDataPacket[]>(`SELECT ${PRODUCT_FIELDS} FROM produtos WHERE nome LIKE ? ORDER BY status ASC, nome LIMIT 12`, [`%${term}%`]);
+  const productId = /^\d+$/.test(term) && Number.isSafeInteger(Number(term)) ? Number(term) : null;
+  const like = `%${term.replace(/[\\%_]/g, '\\$&')}%`;
+  const values: (string|number)[] = [...(productId!==null?[productId]:[]),like,like,like,...(productId!==null?[productId]:[])];
+  const [rows] = await productPool.execute<RowDataPacket[]>(`SELECT ${PRODUCT_FIELDS} FROM produtos
+    WHERE (${productId!==null?'id = ? OR ':''}nome LIKE ? OR desc_curta LIKE ? OR slug LIKE ?)
+    ${activeOnly?'AND status = 0':''}
+    ORDER BY ${productId!==null?'(id = ?) DESC, ':''}status ASC, nome LIMIT 12`, values);
   return rows.map(mapProduct);
 }
 
@@ -137,12 +145,18 @@ export function productDescriptionMessages(product: Product) {
   return messages;
 }
 
-export function convertProductImageToJpeg(input: Buffer) {
+export function convertProductImageToJpeg(input: Buffer, carousel = false) {
   return new Promise<Buffer>((resolve, reject) => {
     if (!ffmpegPath) return reject(new Error("FFmpeg não está disponível para converter a imagem do produto."));
+    const filters = carousel ? [
+      '-f','lavfi','-i','color=c=white:s=1200x630',
+      '-filter_complex_threads','1',
+      '-filter_complex','[0:v]scale=1080:480:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1[product];[1:v][product]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuvj420p[out]',
+      '-map','[out]'
+    ] : ['-vf',"scale='min(1600,iw)':-2"];
     const process = spawn(ffmpegPath, [
-      "-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-frames:v", "1",
-      "-vf", "scale='min(1600,iw)':-2", "-q:v", "3", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"
+      '-hide_banner','-loglevel','error','-i','pipe:0',...filters,
+      '-frames:v','1','-q:v','3','-f','image2pipe','-vcodec','mjpeg','pipe:1'
     ], { windowsHide: true });
     const output: Buffer[] = []; const errors: Buffer[] = [];
     process.stdout.on("data", (chunk) => output.push(Buffer.from(chunk)));
@@ -153,7 +167,7 @@ export function convertProductImageToJpeg(input: Buffer) {
   });
 }
 
-export async function downloadProductImage(product: Product) {
+export async function downloadProductImage(product: Product, carousel = false) {
   if (!product.imageUrl) throw new Error("Este produto não possui imagem cadastrada.");
   const url = new URL(product.imageUrl);
   if (!["http:", "https:"].includes(url.protocol)) throw new Error("A imagem do produto possui uma URL inválida.");
@@ -163,7 +177,7 @@ export async function downloadProductImage(product: Product) {
   if (!mimeType.startsWith("image/")) throw new Error("O arquivo cadastrado no produto não é uma imagem válida.");
   const sourceBuffer = Buffer.from(await response.arrayBuffer());
   if (!sourceBuffer.length || sourceBuffer.length > 20 * 1024 * 1024) throw new Error("A imagem original do produto deve ter no máximo 20 MB.");
-  const buffer = await convertProductImageToJpeg(sourceBuffer);
+  const buffer = await convertProductImageToJpeg(sourceBuffer,carousel);
   if (!buffer.length || buffer.length > 5 * 1024 * 1024) throw new Error("A imagem convertida excede o limite de 5 MB do WhatsApp.");
   return { buffer, mimeType: "image/jpeg", fileName: `produto-${product.id}.jpg` };
 }

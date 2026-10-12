@@ -1,4 +1,5 @@
 import { api } from './api.js';
+import { createCarouselEditor } from './campaign-carousel.js?v=5';
 
 const $ = (selector) => document.querySelector(selector);
 const SYSTEM_TIME_ZONE = 'America/Sao_Paulo';
@@ -9,6 +10,9 @@ let conversationPress = null;
 let suppressedConversationClick = null;
 
 const state = { user: null, users: [], teams: [], quickReplies: [], quickReplyMatches: [], quickReplyIndex: -1, templates: [], tags: [], contacts: [], conversations: [], messages: [], messagesHasMore: false, historySearchTerm: '', historySearchMatches: [], historySearchIndex: -1, scheduledMessages: [], pendingMessages: [], pastedFiles: [], pastedFileIndex: 0, pasteObjectUrls: [], active: null, status: 'new', assignedToMe: false, contactStatus: '', contactPage: 1, contactPages: 1, contactTotal: 0, searchTimer: null, contactSearchTimer: null, replyTo: null, actionMessage: null, contextConversation: null, assignmentConversationId: null, scheduleConversationId: null, scheduleEditingId: null, emojiMode: 'insert', recorder: null, typingTimer: null, pendingOpenConversationId: null, soundEnabled: localStorage.getItem('chat.notificationSound') !== 'off', notificationAudio: null };
+
+let templateConversationId=null;
+const conversationCarousel = createCarouselEditor(message=>{ $('#template-error').textContent=message; },{fields:'#template-variables',submit:'#send-conversation-template',mediaBase:()=>`/api/conversations/${templateConversationId}/carousel`});
 
 function escapeHtml(value = '') { const node = document.createElement('div'); node.textContent = String(value); return node.innerHTML; }
 function initials(name = '?') { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase(); }
@@ -59,7 +63,15 @@ function messageContent(item) {
   }
   if (item.type === 'template') {
     const buttons = Array.isArray(content.buttons) ? content.buttons : [];
-    return `<p>${escapeHtml(item.textBody || `Template: ${content.template || 'mensagem'}`).replaceAll('\n', '<br>')}</p>${buttons.length ? `<div class="message-template-buttons">${buttons.map(button => button.url ? `<a href="${escapeHtml(button.url)}" target="_blank" rel="noopener">${escapeHtml(button.text || 'Abrir')}</a>` : `<span>${escapeHtml(button.text || 'Ação')}</span>`).join('')}</div>` : ''}`;
+    const carousel = (content.components || []).find(component => component.type?.toLowerCase() === 'carousel');
+    const carouselHtml = carousel?.cards?.length ? `<div class="message-carousel">${carousel.cards.map(card => {
+      const mediaId = card.components.find(component => component.type === 'header')?.parameters?.[0]?.image?.id;
+      const parameters = card.components.find(component => component.type === 'body')?.parameters || [];
+      const suffix = card.components.find(component => component.type === 'button' && component.sub_type === 'url')?.parameters?.[0]?.text;
+      const link = content.template === 'ofertas_produtos_carrossel' && suffix ? safeImageUrl(`https://providafarma.com/produto/${suffix}`) : '';
+      return `<article>${mediaId && /^\d+$/.test(mediaId) ? `<img src="/api/campaigns/carousel/media/${mediaId}" alt="Produto" loading="lazy">` : ''}<p>${parameters.map(parameter => escapeHtml(parameter.text || '')).join('<br>')}</p>${link ? `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">Quero mais detalhes</a>` : ''}<span>Quero Esse!</span></article>`;
+    }).join('')}</div>` : '';
+    return `<p>${escapeHtml(item.textBody || `Template: ${content.template || 'mensagem'}`).replaceAll('\n', '<br>')}</p>${carouselHtml}${buttons.length ? `<div class="message-template-buttons">${buttons.map(button => button.url ? `<a href="${escapeHtml(button.url)}" target="_blank" rel="noopener">${escapeHtml(button.text || 'Abrir')}</a>` : `<span>${escapeHtml(button.text || 'Ação')}</span>`).join('')}</div>` : ''}`;
   }
   if (item.type === 'image' || item.type === 'sticker') return `<a href="${url}" target="_blank" class="media-preview"><img src="${url}" alt="${escapeHtml(item.textBody || 'Imagem')}"></a>${item.textBody ? `<p>${escapeHtml(item.textBody)}</p>` : ''}`;
   if (item.type === 'video') return `<video class="media-preview" src="${url}" controls preload="metadata"></video>${item.textBody ? `<p>${escapeHtml(item.textBody)}</p>` : ''}`;
@@ -920,7 +932,7 @@ $('#mobile-back').addEventListener('click', () => $('.app-shell').classList.remo
 $('#quick-replies-button').addEventListener('click', () => { const opening = $('#quick-replies-popover').classList.contains('hidden'); state.quickReplyIndex = -1; if (opening) renderQuickReplies(); $('#quick-replies-popover').classList.toggle('hidden', !opening); });
 $('#quick-replies-popover').addEventListener('click', event => { if (event.target.closest('[data-add-quick-reply]')) { $('#quick-reply-form').reset(); $('#quick-reply-error').textContent = ''; $('#quick-replies-popover').classList.add('hidden'); openDialog('quick-reply-dialog'); requestAnimationFrame(() => $('#quick-reply-title').focus()); return; } const button = event.target.closest('[data-quick-id]'); if (!button) return; applyQuickReply(state.quickReplies.find(reply => reply.id === button.dataset.quickId)); });
 $('#template-button').addEventListener('click', async () => {
-  if (!state.active) return; openDialog('template-dialog'); $('#template-error').textContent = '';
+  if (!state.active) return; templateConversationId=state.active.id;renderTemplateForm(null);openDialog('template-dialog'); $('#template-error').textContent = '';
   try {
     const data = await api('/api/templates'); state.templates = data.items;
     $('#template-select').innerHTML = '<option value="">Selecione um template</option>' + state.templates.map((item, index) => `<option value="${index}">${escapeHtml(item.name)} · ${escapeHtml(item.language)} · ${escapeHtml(item.category)}</option>`).join('');
@@ -1003,12 +1015,17 @@ $('#template-form').addEventListener('submit', async event => {
     if (!component) { component = { type, parameters: [] }; items.push(component); }
     component.parameters.push({ type: 'text', text: input.value, ...(input.dataset.variableName ? { parameter_name: input.dataset.variableName } : {}) }); return items;
   }, []);
-  try { await api(`/api/conversations/${state.active.id}/templates`, { method: 'POST', body: JSON.stringify({ name: template.name, language: template.language, components }) }); closeDialog('template-dialog'); await loadMessages(); toast('Template enviado.'); }
+  const sendButton=$('#send-conversation-template');
+  if(state.active?.id!==templateConversationId)return ($('#template-error').textContent='A conversa mudou. Abra o envio de template novamente.');
+  sendButton.disabled=true;
+  try { const carouselCards=conversationCarousel.serialize();await api(`/api/conversations/${templateConversationId}/templates`, { method: 'POST', body: JSON.stringify({ name: template.name, language: template.language, components,carouselCards }) }); closeDialog('template-dialog'); await loadMessages(); toast('Template enviado.'); }
   catch (error) { $('#template-error').textContent = error.message; }
+  finally {sendButton.disabled=false;}
 });
 
 function renderTemplateForm(template) {
-  if (!template) { $('#template-preview').classList.add('hidden'); $('#template-variables').innerHTML = ''; return; }
+  $('#template-dialog').classList.toggle('template-carousel-modal',Boolean(template?.components?.some(component=>component.type==='CAROUSEL')));
+  if (!template) { conversationCarousel.render(null); $('#template-preview').classList.add('hidden'); $('#template-variables').innerHTML = ''; return; }
   const header = template.components?.find(component => component.type === 'HEADER')?.text || '';
   const body = template.components?.find(component => component.type === 'BODY')?.text || '';
   const footer = template.components?.find(component => component.type === 'FOOTER')?.text || '';
@@ -1028,6 +1045,8 @@ function renderTemplateForm(template) {
     }
   }
   $('#template-variables').innerHTML = fields.join('');
+  conversationCarousel.render(template);
+  if(template.name==='ofertas_produtos_carrossel'){const nameInput=$('#template-variables [data-template-component="BODY"]');if(nameInput)nameInput.value=displayName(state.active);}
   $('#template-preview').dataset.header = header; $('#template-preview').dataset.body = body; $('#template-preview').dataset.footer = footer;
   $('#template-preview').dataset.buttons = JSON.stringify(buttons); updateTemplatePreview(); $('#template-preview').classList.remove('hidden');
 }

@@ -64,6 +64,24 @@ export async function uploadMedia(buffer: Buffer, mimeType: string, fileName: st
   return result.id;
 }
 
+export async function uploadTemplateExample(buffer: Buffer, fileName: string) {
+  const query = new URLSearchParams({ file_length: String(buffer.length), file_type: 'image/jpeg', file_name: fileName });
+  const session = await metaFetch<{ id: string }>(`app/uploads?${query}`, { method: 'POST', signal: AbortSignal.timeout(30000) });
+  const result = await metaFetch<{ h: string }>(session.id, {
+    method: 'POST', headers: { Authorization: `OAuth ${config.META_ACCESS_TOKEN}`, file_offset: '0', 'Content-Type': 'application/octet-stream' },
+    body: new Uint8Array(buffer), signal: AbortSignal.timeout(30000)
+  });
+  if (!result.h) throw new Error('A Meta não retornou o identificador da imagem de exemplo.');
+  return result.h;
+}
+
+export async function createMessageTemplate(definition: Record<string, unknown>) {
+  if (!config.META_WABA_ID) throw new Error('Conta WhatsApp Business não configurada.');
+  return metaFetch<{ id: string; status: string; category: string }>(`${config.META_WABA_ID}/message_templates`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(definition), signal: AbortSignal.timeout(30000)
+  });
+}
+
 export async function sendMedia(to: string, type: "image" | "audio" | "video" | "document", mediaId: string, caption?: string, fileName?: string, voice = false) {
   const media: Record<string, unknown> = { id: mediaId };
   if (voice && type === "audio") media.voice = true;
@@ -116,4 +134,9 @@ export async function getCatalogProduct(catalogId: string, retailerId: string): 
     currency: item.currency ? String(item.currency) : undefined,
     imageUrl: item.image_url ? String(item.image_url) : undefined
   };
+}
+
+export async function editMessageTemplate(id: string, components: unknown[]) {
+  if (!/^\d+$/.test(id)) throw new Error('Identificador de modelo inv?lido.');
+  return metaFetch<{ success: boolean }>(id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ components }), signal: AbortSignal.timeout(30000) });
 }
