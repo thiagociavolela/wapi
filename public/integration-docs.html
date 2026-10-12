@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>API de integrações · Central</title>
+  <link rel="icon" href="/images/favicon.png">
+  <link rel="stylesheet" href="/vendor/swagger-ui/swagger-ui.css">
+  <link rel="stylesheet" href="/css/integration-docs.css?v=1">
+</head>
+<body>
+  <header class="docs-header"><div><a href="/integrations.html">← Integrações</a><h1>API da Central</h1><p>Envie templates, agende mensagens e acompanhe a entrega pelo seu sistema.</p></div><a class="docs-download" href="/openapi/integrations.json" download="central-integrations.openapi.json">Baixar OpenAPI JSON</a></header>
+  <section class="docs-guide" aria-label="Como integrar"><article><h2>1. Autenticação</h2><p>Use a chave configurada em <code>INTEGRATION_API_KEY</code> no servidor. Clique em <strong>Authorize</strong> e informe somente a chave. As requisições usam <code>Authorization: Bearer SUA_CHAVE</code>.</p></article><article><h2>2. Evite envios duplicados</h2><p>Na criação, envie um <code>Idempotency-Key</code> único por evento, com 8 a 190 caracteres. Reutilize a mesma chave apenas para repetir a mesma solicitação.</p></article><article><h2>3. Acompanhe o envio</h2><p><code>202</code> confirma o registro na fila. Consulte o ID retornado para verificar processamento e entrega. Os testes de POST e DELETE executam ações reais neste ambiente.</p></article></section>
+  <div id="swagger-ui"></div><p id="docs-error" role="alert" hidden>Não foi possível carregar a documentação. Atualize a página para tentar novamente.</p>
+  <script src="/vendor/swagger-ui/swagger-ui-bundle.js"></script><script src="/js/integration-docs.js?v=1"></script>
+</body></html>

@@ -1,0 +1,602 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Central · API de integrações",
+    "version": "1.0.0",
+    "description": "API externa para envio transacional de templates aprovados pela Meta. A autenticação é feita por chave Bearer (INTEGRATION_API_KEY), independente do login da Central. Solicite a chave ao administrador e mantenha-a no backend da sua integração.\n\nFluxo: POST registra um job → GET consulta processamento e entrega → DELETE cancela apenas um job pendente. HTTP 202 não confirma envio nem entrega. O campo status descreve o job e deliveryStatus descreve a mensagem no WhatsApp.\n\nEsta documentação cobre os endpoints externos existentes. As rotas do painel usam sessão e não fazem parte deste contrato. O payload atual não aceita mídia, catálogo nem cartões de carrossel; esses envios estão disponíveis na interface da Central. Os nomes de templates usados nos exemplos são ilustrativos: substitua por um modelo aprovado e seus parâmetros reais.\n\nA chave atual opera na organização padrão da Central. Não há seleção de organização no payload, endpoint de listagem de templates nem webhook de retorno para o consumidor nesta API. Consulte o job para acompanhar o resultado."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Ambiente atual (mesma origem da documentação)"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Mensagens",
+      "description": "Envio, agendamento, consulta e cancelamento de mensagens transacionais."
+    }
+  ],
+  "security": [
+    {
+      "IntegrationBearer": []
+    }
+  ],
+  "paths": {
+    "/api/integrations/messages": {
+      "post": {
+        "tags": [
+          "Mensagens"
+        ],
+        "summary": "Criar ou agendar um envio",
+        "operationId": "createIntegrationMessage",
+        "description": "Registra uma mensagem e a conversa correspondente. Sem sendAt, o envio entra na fila imediatamente; com uma data futura, fica agendado. O formato de sendAt exige fuso (Z ou offset) e o limite é 366 dias a partir da solicitação. Uma data no passado é processada assim que possível.\n\nO Idempotency-Key é obrigatório, com 8 a 190 caracteres. A mesma chave retorna o registro existente, sem criar outro envio. O servidor não compara o conteúdo das duas solicitações; por isso, use uma nova chave para um novo evento e preserve o payload nas tentativas. A validação do template ocorre antes da consulta de duplicidade.\n\nparameters segue a ordem das variáveis do cabeçalho textual e do corpo. Se buttonParameters for informado, nele ficam os valores dinâmicos dos botões URL. Se for omitido, esses valores devem ser acrescentados ao final de parameters, na ordem dos botões. Use apenas o trecho variável do link, não o URL completo. Strings e números são convertidos para texto. Não há substituição automática do nome do contato: inclua-o no parâmetro correspondente.\n\nO worker tenta enviar até três vezes, com intervalo de 30 segundos após uma falha. HTTP 202 significa registro na fila; a confirmação de envio e entrega deve ser consultada por GET.",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "description": "Identificador único do evento, estável nas tentativas. externalId não substitui este cabeçalho.",
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 190
+            },
+            "example": "pedido-123-confirmacao-v1"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMessage"
+              },
+              "examples": {
+                "immediate": {
+                  "summary": "Envio imediato com variáveis de corpo",
+                  "value": {
+                    "to": "5511999999999",
+                    "contactName": "Maria Silva",
+                    "template": "confirmacao_pedido",
+                    "language": "pt_BR",
+                    "parameters": [
+                      "Maria",
+                      "123"
+                    ],
+                    "externalId": "pedido-123",
+                    "metadata": {
+                      "source": "ecommerce",
+                      "orderId": 123
+                    }
+                  }
+                },
+                "urlButton": {
+                  "summary": "Template com botão URL dinâmico",
+                  "value": {
+                    "to": "5511999999999",
+                    "template": "pedido_pendente_finalizacao_br",
+                    "parameters": [
+                      "Maria",
+                      "123"
+                    ],
+                    "buttonParameters": [
+                      "pedido-123"
+                    ],
+                    "metadata": {
+                      "source": "site"
+                    }
+                  }
+                },
+                "scheduled": {
+                  "summary": "Agendamento com fuso explícito (substitua por uma data futura)",
+                  "value": {
+                    "to": "5511999999999",
+                    "template": "lembrete_pedido",
+                    "parameters": [
+                      "Maria",
+                      "123"
+                    ],
+                    "sendAt": "2026-10-13T09:00:00-03:00"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Solicitação repetida: o job existente foi retornado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateResult"
+                },
+                "example": {
+                  "id": "e0b47f41-5f45-4ae3-987c-c51d4c299730",
+                  "status": "pending",
+                  "messageId": "208d9349-5d6e-4e51-9d8c-cd472f06b493",
+                  "conversationId": "99cf2d77-1c7d-4c7c-85c3-76d1b67c048e",
+                  "scheduledFor": "2026-10-12T15:00:00.000Z",
+                  "duplicate": true,
+                  "errorMessage": null
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Novo job registrado. Ainda não confirma envio nem entrega.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateResult"
+                },
+                "example": {
+                  "id": "e0b47f41-5f45-4ae3-987c-c51d4c299730",
+                  "status": "queued",
+                  "messageId": "208d9349-5d6e-4e51-9d8c-cd472f06b493",
+                  "conversationId": "99cf2d77-1c7d-4c7c-85c3-76d1b67c048e",
+                  "scheduledFor": "2026-10-12T15:00:00.000Z",
+                  "duplicate": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Cabeçalho, payload ou agendamento inválido.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Chave Bearer ausente ou inválida.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Template ausente, não aprovado, idioma incompatével, quantidade de parâmetros incorreta ou falha ao registrar o envio.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Erro interno.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "INTEGRATION_API_KEY não configurada no servidor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/integrations/messages/{id}": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "description": "ID do job retornado pelo POST (não é messageId, conversationId nem wamid).",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Mensagens"
+        ],
+        "summary": "Consultar processamento e entrega",
+        "operationId": "getIntegrationMessage",
+        "description": "Retorna o estado atual do job e da mensagem. pending inclui envios agendados e tentativas pendentes. sent no job indica que o envio foi aceito pela Meta; deliveryStatus permite acompanhar entrega e leitura. Datas ainda não registradas são null.",
+        "responses": {
+          "200": {
+            "description": "Job encontrado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageStatus"
+                },
+                "example": {
+                  "id": "e0b47f41-5f45-4ae3-987c-c51d4c299730",
+                  "status": "sent",
+                  "messageId": "208d9349-5d6e-4e51-9d8c-cd472f06b493",
+                  "conversationId": "99cf2d77-1c7d-4c7c-85c3-76d1b67c048e",
+                  "scheduledFor": "2026-10-12T15:00:00.000Z",
+                  "externalId": "pedido-123",
+                  "phone": "5511999999999",
+                  "template": "confirmacao_pedido",
+                  "language": "pt_BR",
+                  "attempts": 1,
+                  "errorMessage": null,
+                  "createdAt": "2026-10-12T15:00:00.000Z",
+                  "processedAt": "2026-10-12T15:00:01.000Z",
+                  "wamid": "wamid.EXEMPLO",
+                  "deliveryStatus": "delivered",
+                  "sentAt": "2026-10-12T15:00:01.000Z",
+                  "deliveredAt": "2026-10-12T15:00:02.000Z",
+                  "readAt": null
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Chave Bearer ausente ou inválida.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job não encontrado na organização padrão.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Erro interno.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "INTEGRATION_API_KEY não configurada no servidor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Mensagens"
+        ],
+        "summary": "Cancelar um envio pendente",
+        "operationId": "cancelIntegrationMessage",
+        "description": "Cancela somente jobs com status pending. Não desfaz mensagens já enviadas. O job passa para cancelled; a mensagem associada é marcada como failed com motivo de cancelamento. Um ID inexistente também retorna 409, assim como um job já processado ou cancelado.",
+        "responses": {
+          "204": {
+            "description": "Cancelamento concluído. Resposta sem corpo."
+          },
+          "401": {
+            "description": "Chave Bearer ausente ou inválida.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Job inexistente, em processamento, enviado, falho ou já cancelado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Erro interno.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "INTEGRATION_API_KEY não configurada no servidor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "IntegrationBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Informe a INTEGRATION_API_KEY configurada no servidor, sem o prefixo Bearer. A chave não é fornecida pela documentação."
+      }
+    },
+    "schemas": {
+      "CreateMessage": {
+        "type": "object",
+        "required": [
+          "to",
+          "template"
+        ],
+        "properties": {
+          "to": {
+            "type": "string",
+            "description": "Número completo com código do país (ex.: 55 para Brasil). O servidor remove caracteres não numéricos e valida 10 a 15 dígitos; não acrescenta o DDI.",
+            "example": "5511999999999"
+          },
+          "contactName": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 160,
+            "description": "Nome cadastral do contato; não preenche automaticamente as variáveis do template."
+          },
+          "template": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{1,512}$",
+            "description": "Nome de um template aprovado. O alias pedido_pendente_finalizacao é resolvido para pedido_pendente_finalizacao_br.",
+            "example": "confirmacao_pedido"
+          },
+          "language": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 20,
+            "default": "pt_BR"
+          },
+          "parameters": {
+            "type": "array",
+            "maxItems": 20,
+            "default": [],
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "description": "Variáveis do cabeçalho textual e do corpo, na ordem. Se buttonParameters for omitido, acrescente ao final as variáveis dos botões URL."
+          },
+          "buttonParameters": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "description": "Valores dinâmicos dos botões URL, na ordem; exige a quantidade exata de variáveis desses botões."
+          },
+          "sendAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 com Z ou offset. Opcional, no máximo 366 dias à frente."
+          },
+          "externalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 190,
+            "description": "Referência do seu sistema, como ID do pedido; não garante idempotência."
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Dados adicionais armazenados com o envio. source identifica a origem exibida na Central."
+          }
+        }
+      },
+      "CreateResult": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "messageId",
+          "conversationId",
+          "scheduledFor",
+          "duplicate"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "scheduled",
+              "pending",
+              "processing",
+              "sent",
+              "failed",
+              "cancelled"
+            ],
+            "description": "Novos registros retornam queued ou scheduled. Duplicados retornam o estado persistido do job."
+          },
+          "messageId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "conversationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scheduledFor": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "duplicate": {
+            "type": "boolean"
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true,
+            "description": "Pode aparecer quando um registro existente é retornado."
+          }
+        }
+      },
+      "MessageStatus": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "phone",
+          "template",
+          "language",
+          "scheduledFor",
+          "attempts",
+          "messageId",
+          "conversationId",
+          "deliveryStatus"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "processing",
+              "sent",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "externalId": {
+            "type": "string",
+            "nullable": true
+          },
+          "phone": {
+            "type": "string"
+          },
+          "template": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "scheduledFor": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "processedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "messageId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "conversationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "wamid": {
+            "type": "string",
+            "nullable": true,
+            "description": "Identificador da mensagem na Meta."
+          },
+          "deliveryStatus": {
+            "type": "string",
+            "description": "Estado da mensagem; por exemplo queued, sent, delivered, read ou failed."
+          },
+          "sentAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "deliveredAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "readAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Detalhes opcionais de validação do payload."
+          }
+        },
+        "example": {
+          "error": "Credencial da integração inválida."
+        }
+      }
+    }
+  }
+}

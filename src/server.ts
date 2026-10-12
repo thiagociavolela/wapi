@@ -1,5 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import cookieParser from "cookie-parser";
 import express from "express";
 import helmet from "helmet";
@@ -26,6 +27,11 @@ app.use("/webhooks", webhookRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/integrations", integrationRouter);
 app.use("/api", apiRouter);
+app.get('/api-docs', (_req, res) => res.redirect('/integration-docs.html'));
+const swaggerRoot = path.dirname(createRequire(import.meta.url).resolve('swagger-ui-dist/package.json'));
+for (const asset of ['swagger-ui.css', 'swagger-ui-bundle.js']) {
+  app.get(`/vendor/swagger-ui/${asset}`, (_req, res) => res.sendFile(path.join(swaggerRoot, asset)));
+}
 app.use("/vendor/emoji-picker", express.static(path.resolve(root, "../node_modules/emoji-picker-element"), { fallthrough: false }));
 app.use("/vendor/emoji-data", express.static(path.resolve(root, "../node_modules/emoji-picker-element-data"), { fallthrough: false }));
 app.use(express.static(root, { extensions: ["html"] }));

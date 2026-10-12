@@ -155,3 +155,38 @@ export async function notificarPedidoRecebido(pedido) {
 ```
 
 O worker tenta o envio até três vezes. Uma falha temporária é reagendada; depois da terceira falha, o job e a mensagem ficam como `failed` no histórico.
+
+
+---
+
+# API de integrações da Central
+
+Na tela `/integrations.html`, use **Documentação API · Swagger**. A documentação também está disponível em `/api-docs`, e o contrato OpenAPI 3.0.3 em `/openapi/integrations.json`, para importação no Postman e geração de clientes.
+
+## Autenticação
+
+Configure `INTEGRATION_API_KEY` no `.env` do servidor e reinicie o processo. Forneça essa chave aos desenvolvedores por um canal privado. Mantenha-a no backend da integração e envie `Authorization: Bearer SUA_CHAVE`. No botão **Authorize** do Swagger, informe somente a chave. A documentação não expõe a credencial nem a salva entre recarregamentos.
+
+## Operações disponíveis
+
+| Método | Caminho | Finalidade |
+| --- | --- | --- |
+| POST | `/api/integrations/messages` | Registrar um envio imediato ou agendado |
+| GET | `/api/integrations/messages/{id}` | Consultar o job e o estado de entrega |
+| DELETE | `/api/integrations/messages/{id}` | Cancelar um job pendente |
+
+O POST exige `Idempotency-Key` com 8 a 190 caracteres. Use uma chave por evento e mantenha-a nas tentativas da mesma solicitação. O retorno `202` confirma apenas o registro na fila; `200` indica uma solicitação duplicada. Consulte o `id` do job retornado para acompanhar o envio. `externalId` é uma referência comercial e não substitui a idempotência.
+
+`parameters` preenche as variáveis do cabeçalho textual e do corpo, na ordem. `buttonParameters` preenche as partes variáveis dos botões URL. Quando esse campo é omitido, as variáveis dos botões vão ao final de `parameters`. `contactName` não preenche automaticamente o template. `sendAt` usa ISO 8601 com fuso, com limite de 366 dias à frente.
+
+O Swagger permite requisições reais ao ambiente atual após a autorização. Nada é enviado ao abrir a documentação. Use um número de teste e um template aprovado ao executar POST; DELETE cancela um envio real. Os nomes de modelos e valores dos exemplos são ilustrativos.
+
+## Escopo atual
+
+A API usa a organização padrão e a chave global já existente. Não há endpoint externo para listar templates, receber callbacks de entrega ou enviar imagens, catálogo e carrossel. As rotas internas do painel usam autenticação por sessão e estão fora deste contrato.
+
+## Manutenção
+
+O contrato está em `public/openapi/integrations.json`. Atualize-o ao alterar `src/routes/integrations.ts` ou os campos retornados por `src/modules/integrations/service.ts`. Os testes em `src/routes/integrations-docs.test.ts` verificam autenticação, idempotência, exemplos e códigos de resposta usando serviços simulados, sem acessar o banco nem enviar mensagens.
+
+Os arquivos do Swagger são servidos localmente pelo pacote `swagger-ui-dist`, sem CDN. Configuração de interface: `public/js/integration-docs.js`. Referência: [documentação oficial de configuração do Swagger UI](https://swagger.io/docs/open-source-tools/swagger-ui/usage/configuration/).
