@@ -1,4 +1,5 @@
 import { config, isMetaConfigured } from "../../config.js";
+import { normalizeTemplateNameComponents } from './template-parameters.js';
 
 type MetaError = { message?: string; code?: number; error_data?: { details?: string }; fbtrace_id?: string };
 interface MetaResponse { messages?: Array<{ id: string }>; error?: MetaError }
@@ -52,7 +53,7 @@ export async function sendTypingIndicator(messageId: string) {
 }
 
 export const sendTemplate = (to: string, name: string, language: string, components: unknown[] = []) =>
-  sendMetaMessage(to, { type: "template", template: { name, language: { code: language }, components } });
+  sendMetaMessage(to, { type: "template", template: { name, language: { code: language }, components: normalizeTemplateNameComponents(name, components) } });
 
 export async function uploadMedia(buffer: Buffer, mimeType: string, fileName: string) {
   if (!config.META_PHONE_NUMBER_ID) throw new Error("Número da Meta não configurado.");

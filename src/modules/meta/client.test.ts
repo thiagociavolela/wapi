@@ -8,6 +8,17 @@ import { sendMedia, sendTemplate, sendTypingIndicator } from "./client.js";
 describe("envio de áudio pela Meta", () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it('encurta somente o nome ao reenviar pedido_confirmado com componentes antigos', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: 'wamid.retry' }] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const product = 'Descrição do produto que deve permanecer completa';
+    const components = [{ type: 'body', parameters: [{ type: 'text', text: 'Renata Fidelis do Carmo de Sant Ana Carvalho' }, { type: 'text', text: product }] }];
+    await sendTemplate('5511999999999', 'pedido_confirmado', 'pt_BR', components);
+    const sent = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(sent.template.components[0].parameters.map((item: any) => item.text)).toEqual(['Renata Fidelis do Carmo', product]);
+    expect(components[0]!.parameters[0]!.text).toBe('Renata Fidelis do Carmo de Sant Ana Carvalho');
+  });
+
   it("preserva o DDI, nome da variável e token separado no payload HTTP da Meta", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: "wamid.template" }] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);

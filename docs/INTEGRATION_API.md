@@ -97,6 +97,8 @@ O job persiste o formato separado como `{ "parameters": [...], "buttonParameters
 
 ## Idempotência
 
+Nomes identificados nas variáveis da saudação são abreviados em palavras inteiras até 30 caracteres antes do envio. O cadastro do contato mantém o nome completo; descrições, números de pedido e parâmetros dos botões não são abreviados. O mesmo tratamento protege o reenvio de `pedido_confirmado` com componentes antigos.
+
 O `Idempotency-Key` é obrigatório e deve representar unicamente o evento comercial. Repetir a mesma requisição com a mesma chave não envia outra mensagem: a API devolve o registro existente com `duplicate: true`.
 
 Sugestões:

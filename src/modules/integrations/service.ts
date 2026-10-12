@@ -4,6 +4,7 @@ import { pool } from "../../database/pool.js";
 import { defaultOrganizationId } from "../conversations/service.js";
 import { listMessageTemplates, sendTemplate } from "../meta/client.js";
 import { publish } from "../realtime/events.js";
+import { isContactNameVariable, templateContactName } from '../meta/template-parameters.js';
 
 export type TemplateDefinition = { name: string; status: string; language: string; category: string; components: Array<Record<string, any>> };
 export type IntegrationMessageInput = { to: string; contactName?: string; template: string; language: string; parameters: string[]; buttonParameters?: string[]; sendAt?: Date; externalId?: string; metadata?: Record<string, unknown> };
@@ -44,7 +45,11 @@ export function buildTemplateSnapshot(template: TemplateDefinition, parameters: 
   for (const component of template.components) {
     if (["HEADER", "BODY"].includes(component.type) && typeof component.text === "string") {
       const names = variables(component.text);
-      const values = names.map((name) => options.autoContactName && name === "nome" ? "{{nome}}" : consume(1)[0]!);
+      const values = names.map((name) => {
+        if (options.autoContactName && name === 'nome') return '{{nome}}';
+        const value = consume(1)[0]!;
+        return typeof value === 'string' && isContactNameVariable(name, component.text) ? templateContactName(value) : value;
+      });
       lines.push(render(component.text, values));
       if (values.length) components.push({ type: component.type.toLowerCase(), parameters: values.map((text, index) => ({ type: "text", text, ...(/^\d+$/.test(names[index]!) ? {} : { parameter_name: names[index] }) })) });
     } else if (component.type === "FOOTER" && typeof component.text === "string") {
