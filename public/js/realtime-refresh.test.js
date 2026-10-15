@@ -1,0 +1,41 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { createRefreshQueue } from './realtime-refresh.js';
+afterEach(() => vi.useRealTimers());
+it('collapses a burst into one refresh', async () => {
+  vi.useFakeTimers();
+  const refresh = vi.fn().mockResolvedValue(undefined);
+  const enqueue = createRefreshQueue(refresh, vi.fn());
+  for (let i = 0; i < 100; i++) enqueue({ type: 'message', conversationId: 'a' });
+  enqueue({ type: 'conversation', conversationId: 'b' });
+  await vi.advanceTimersByTimeAsync(500);
+  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(refresh.mock.calls[0][0]).toHaveLength(2);
+});
+it('serializes refreshes and retains events arriving during a request', async () => {
+  vi.useFakeTimers();
+  let complete;
+  const refresh = vi.fn().mockImplementationOnce(() => new Promise(resolve => { complete = resolve; })).mockResolvedValue(undefined);
+  const enqueue = createRefreshQueue(refresh, vi.fn());
+  enqueue({ type: 'message', conversationId: 'a' });
+  await vi.advanceTimersByTimeAsync(500);
+  enqueue({ type: 'message', conversationId: 'b' });
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(refresh).toHaveBeenCalledTimes(1);
+  complete();
+  await vi.advanceTimersByTimeAsync(500);
+  expect(refresh).toHaveBeenCalledTimes(2);
+  expect(refresh.mock.calls[1][0]).toEqual([{ type: 'message', conversationId: 'b' }]);
+});
+it('recovers after a failed refresh', async () => {
+  vi.useFakeTimers();
+  const error = new Error('offline');
+  const refresh = vi.fn().mockRejectedValueOnce(error).mockResolvedValue(undefined);
+  const onError = vi.fn();
+  const enqueue = createRefreshQueue(refresh, onError);
+  enqueue({ type: 'message' });
+  await vi.advanceTimersByTimeAsync(500);
+  expect(onError).toHaveBeenCalledWith(error);
+  enqueue({ type: 'message' });
+  await vi.advanceTimersByTimeAsync(500);
+  expect(refresh).toHaveBeenCalledTimes(2);
+});

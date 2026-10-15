@@ -1,4 +1,5 @@
 import { api } from './api.js';
+import { createRefreshQueue } from './realtime-refresh.js';
 import { createCarouselEditor } from './campaign-carousel.js?v=5';
 
 const $ = (selector) => document.querySelector(selector);
@@ -9,7 +10,7 @@ let bulkUpdating = false;
 let conversationPress = null;
 let suppressedConversationClick = null;
 
-const state = { user: null, users: [], teams: [], quickReplies: [], quickReplyMatches: [], quickReplyIndex: -1, templates: [], tags: [], contacts: [], conversations: [], messages: [], messagesHasMore: false, historySearchTerm: '', historySearchMatches: [], historySearchIndex: -1, scheduledMessages: [], pendingMessages: [], pastedFiles: [], pastedFileIndex: 0, pasteObjectUrls: [], active: null, status: 'new', assignedToMe: false, contactStatus: '', contactPage: 1, contactPages: 1, contactTotal: 0, searchTimer: null, contactSearchTimer: null, replyTo: null, actionMessage: null, contextConversation: null, assignmentConversationId: null, scheduleConversationId: null, scheduleEditingId: null, emojiMode: 'insert', recorder: null, typingTimer: null, pendingOpenConversationId: null, soundEnabled: localStorage.getItem('chat.notificationSound') !== 'off', notificationAudio: null };
+const state = { user: null, users: [], teams: [], quickReplies: [], quickReplyMatches: [], quickReplyIndex: -1, templates: [], tags: [], contacts: [], conversations: [], messages: [], messagesHasMore: false, historySearchTerm: '', historySearchMatches: [], historySearchIndex: -1, scheduledMessages: [], pendingMessages: [], pastedFiles: [], pastedFileIndex: 0, pasteObjectUrls: [], active: null, status: 'new', assignedToMe: false, selectedAgentId: '', contactStatus: '', contactPage: 1, contactPages: 1, contactTotal: 0, searchTimer: null, contactSearchTimer: null, replyTo: null, actionMessage: null, contextConversation: null, assignmentConversationId: null, scheduleConversationId: null, scheduleEditingId: null, emojiMode: 'insert', recorder: null, typingTimer: null, pendingOpenConversationId: null, soundEnabled: localStorage.getItem('chat.notificationSound') !== 'off', notificationAudio: null };
 
 let templateConversationId=null;
 const conversationCarousel = createCarouselEditor(message=>{ $('#template-error').textContent=message; },{fields:'#template-variables',submit:'#send-conversation-template',mediaBase:()=>`/api/conversations/${templateConversationId}/carousel`});
@@ -96,20 +97,62 @@ async function init() {
   const requestedConversation = new URLSearchParams(location.search).get('conversation');
   if (requestedConversation) {
     state.status = ''; state.assignedToMe = false; document.querySelectorAll('.filter').forEach(item => item.classList.toggle('active', item.dataset.status === '' && !item.dataset.assigned));
-    await loadConversations(); if (state.conversations.some(item => item.id === requestedConversation)) await openConversation(requestedConversation);
+    await loadConversations();
+    if (!state.conversations.some(item => item.id === requestedConversation)) {
+      const data = await api(`/api/conversations?id=${encodeURIComponent(requestedConversation)}`);
+      if (data.items[0]) state.conversations.unshift(data.items[0]);
+    }
+    if (state.conversations.some(item => item.id === requestedConversation)) await openConversation(requestedConversation);
   }
   connectEvents();
 }
 
-async function loadConversations(preserve = true) {
-  const data = await api(`/api/conversations?search=${encodeURIComponent($('#search').value)}&status=${encodeURIComponent(state.status)}&mine=${state.assignedToMe}`);
-  $('#total-count').textContent = Number(data.counts?.total || 0);
-  $('#unread-count').textContent = Number(data.counts?.unreadCount || 0);
-  document.querySelectorAll('[data-count]').forEach(badge => { badge.textContent = Number(data.counts?.[badge.dataset.count] || 0); });
-  state.conversations = data.items;
-  renderConversations();
-  if (preserve && state.active) { state.active = state.conversations.find(item => item.id === state.active.id) || state.active; renderContactActivity(); renderAdminAccess(); }
+let conversationLoadVersion = 0;
+let conversationsHasMore = false;
+let conversationsLoading = false;
+let conversationFilter = '';
+async function loadConversations(preserve = true, append = false) {
+  const canFilterByAgent = ['admin', 'supervisor'].includes(state.user?.role);
+  $('#conversation-agent-filter').classList.toggle('hidden', state.status !== 'open' || !canFilterByAgent);
+  const selectedAgent = canFilterByAgent && state.status === 'open' ? state.selectedAgentId : '';
+  const filter = `search=${encodeURIComponent($('#search').value)}&status=${encodeURIComponent(state.status)}&mine=${state.assignedToMe}${selectedAgent ? `&assignedUserId=${encodeURIComponent(selectedAgent)}` : ''}`;
+  if (append && (conversationsLoading || !conversationsHasMore || filter !== conversationFilter)) return;
+  const reset = filter !== conversationFilter;
+  conversationFilter = filter;
+  const offset = append ? state.conversations.length : 0;
+  const limit = append || reset ? 10 : Math.max(10, state.conversations.length);
+  const version = ++conversationLoadVersion;
+  conversationsLoading = true;
+  $('#conversation-list').setAttribute('aria-busy', 'true');
+  try {
+    const data = await api(`/api/conversations?${filter}&limit=${Math.min(limit, 10000)}&offset=${offset}`);
+    if (version !== conversationLoadVersion) return;
+    if (data.counts) {
+      $('#total-count').textContent = Number(data.counts.total || 0);
+      $('#unread-count').textContent = Number(data.counts.unreadCount || 0);
+      document.querySelectorAll('[data-count]').forEach(badge => { badge.textContent = Number(data.counts[badge.dataset.count] || 0); });
+    }
+    if (append) {
+      const known = new Set(state.conversations.map(item => item.id));
+      state.conversations.push(...data.items.filter(item => !known.has(item.id)));
+    } else state.conversations = data.items;
+    conversationsHasMore = Boolean(data.hasMore);
+    renderConversations();
+    if (reset) $('#conversation-list').scrollTop = 0;
+    if (preserve && state.active) { state.active = state.conversations.find(item => item.id === state.active.id) || state.active; renderContactActivity(); renderAdminAccess(); }
+  } finally {
+    if (version === conversationLoadVersion) {
+      conversationsLoading = false;
+      $('#conversation-list').setAttribute('aria-busy', 'false');
+    }
+  }
 }
+$('#conversation-list').addEventListener('scroll', () => {
+  const list = $('#conversation-list');
+  if (list.scrollHeight - list.scrollTop - list.clientHeight < 180) {
+    loadConversations(true, true).catch(error => toast(error.message));
+  }
+}, { passive: true });
 
 function renderConversations() {
   const list = $('#conversation-list'); const scrollTop = list.scrollTop;
@@ -426,6 +469,8 @@ document.addEventListener('click', closeSettingsMenu);
 document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeSettingsMenu(); settingsToggle?.focus(); } });
 
 function renderAgentOptions() {
+  $('#conversation-agent-select').innerHTML = `<option value="">Todos os atendentes</option>${state.users.filter(user => state.user?.role !== 'supervisor' || user.role !== 'admin').map(user => `<option value="${escapeHtml(user.id)}">${escapeHtml(user.name)}</option>`).join('')}`;
+  $('#conversation-agent-select').value = state.selectedAgentId;
   $('#agent-select').innerHTML = `<option value="">Não atribuído</option>${state.users.map(user => `<option value="${user.id}">${escapeHtml(user.name)} · ${escapeHtml(user.role)}</option>`).join('')}`;
 }
 
@@ -793,7 +838,7 @@ $('#confirm-conversation-open').addEventListener('click', async () => {
   const button = $('#confirm-conversation-open'); button.disabled = true; $('#conversation-open-error').textContent = '';
   try {
     await api(`/api/conversations/${id}/open`, { method: 'POST' });
-    closeDialog('conversation-open-dialog'); state.pendingOpenConversationId = null; state.status = 'open'; state.assignedToMe = false;
+    closeDialog('conversation-open-dialog'); state.pendingOpenConversationId = null; state.status = 'open'; state.assignedToMe = false; state.selectedAgentId = ''; $('#conversation-agent-select').value = '';
     document.querySelectorAll('.filter').forEach(item => item.classList.toggle('active', item.dataset.status === 'open'));
     await loadConversations(false); await openConversation(id); toast('Conversa movida para Em atendimento.');
   } catch (error) {
@@ -801,6 +846,12 @@ $('#confirm-conversation-open').addEventListener('click', async () => {
     else $('#conversation-open-error').textContent = error.message;
   }
   finally { button.disabled = false; }
+});
+$('#conversation-agent-select').addEventListener('change', async event => {
+  state.selectedAgentId = event.target.value;
+  clearTimeout(state.searchTimer);
+  try { await loadConversations(false); }
+  catch (error) { toast(error.message); }
 });
 $('#search').addEventListener('input', () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(() => loadConversations(false), 300); });
 document.addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); $('#search').focus(); $('#search').select(); } });
@@ -1061,15 +1112,25 @@ $('#template-variables').addEventListener('input', updateTemplatePreview);
 
 function connectEvents() {
   const source = new EventSource('/api/events');
-  source.onmessage = async event => {
-    const data = JSON.parse(event.data); if (data.type === 'ready') return;
+  const enqueue = createRefreshQueue(async events => {
+    const tasks = [];
+    if (events.some(data => !['status', 'note', 'reaction'].includes(data.type))) tasks.push(loadConversations());
+    const activeEvents = state.active ? events.filter(data => !data.conversationId || data.conversationId === state.active.id) : [];
+    if (activeEvents.some(data => data.type !== 'note')) tasks.push(loadMessages());
+    if (activeEvents.some(data => data.type === 'note')) tasks.push(loadNotes());
+    if (activeEvents.some(data => data.type === 'conversation')) tasks.push(loadTags());
+    await Promise.allSettled(tasks).then(results => {
+      const failed = results.find(result => result.status === 'rejected');
+      if (failed) throw failed.reason;
+    });
+  }, error => toast(error.message));
+  source.onmessage = event => {
+    const data = JSON.parse(event.data);
+    if (data.type === 'ready') return;
     if (data.type === 'message' && data.direction === 'inbound') void playNotificationSound();
-    await loadConversations();
-    if (state.active && (!data.conversationId || data.conversationId === state.active.id)) {
-      await loadMessages();
-      if (data.type === 'note') await loadNotes();
-      if (data.type === 'conversation') await loadTags();
-    }
+    // Campaign delivery receipts do not change the inbox; refresh only a message visible here.
+    if (data.type === 'status' && !state.messages.some(item => item.metaMessageId === data.messageId)) return;
+    enqueue(data);
   };
 }
 

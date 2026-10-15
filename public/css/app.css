@@ -451,3 +451,9 @@ body{background:#090a11;color:var(--text)}
 .bulk-status-controls button{padding:9px 14px;border:0;border-radius:8px;background:#7958ed;color:#fff;font-size:12px;font-weight:700}.bulk-conversation-actions button:disabled{opacity:.5}
 
 .message-carousel{display:flex;gap:10px;overflow-x:auto;max-width:min(750px,65vw);padding:10px 0}.message-carousel article{flex:0 0 240px;overflow:hidden;border:1px solid #42404a;border-radius:10px;background:#212327}.message-carousel img{display:block;width:100%;height:auto;aspect-ratio:1200/630;object-fit:contain;background:#fff}.message-carousel article p{padding:10px!important;line-height:1.5;overflow-wrap:anywhere}.message-carousel article>a,.message-carousel article>span{display:block;padding:10px;border-top:1px solid #44414a;text-align:center;color:#53dfaa;font-size:12px;text-decoration:none}@media(max-width:760px){.message-carousel{max-width:75vw}.message-carousel article{flex-basis:220px}}
+
+.conversation-agent-filter{flex:none;display:grid;gap:7px;margin:0 14px 12px;padding:11px 12px;border:1px solid var(--line);border-radius:12px;background:rgba(120,95,235,.07)}
+.conversation-agent-filter>span{font-size:11px;font-weight:700;color:var(--muted)}
+.conversation-agent-filter select{width:100%;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:#1b1b27;color:#eeeaf8;font-size:12px;color-scheme:dark}
+.conversation-agent-filter select:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.conversation-agent-filter.hidden{display:none}

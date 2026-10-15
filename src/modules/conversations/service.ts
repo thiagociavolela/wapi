@@ -5,6 +5,17 @@ import { refreshCarouselImages } from '../campaigns/carousel-media.js';
 import { publish } from "../realtime/events.js";
 import { downloadMedia, sendMedia, sendReaction, sendTemplate, sendText, sendTypingIndicator, uploadMedia } from "../meta/client.js";
 
+// Keep unassigned conversations visible while hiding those assigned to administrators.
+const NON_ADMIN_CONVERSATION = "NOT EXISTS (SELECT 1 FROM users owner WHERE owner.id = c.assigned_user_id AND owner.role = 'admin')";
+
+export async function supervisorCanAccessResource(organizationId: string, resourceId: string, resource: 'conversation' | 'message' | 'scheduled') {
+  const join = resource === 'message' ? 'JOIN messages resource ON resource.conversation_id = c.id' : resource === 'scheduled' ? 'JOIN scheduled_messages resource ON resource.conversation_id = c.id' : '';
+  const idColumn = resource === 'conversation' ? 'c.id' : 'resource.id';
+  const [rows] = await pool.execute<RowDataPacket[]>(`SELECT c.id FROM conversations c ${join}
+    WHERE c.organization_id = ? AND ${idColumn} = ? AND ${NON_ADMIN_CONVERSATION} LIMIT 1`, [organizationId, resourceId]);
+  return rows.length > 0;
+}
+
 const DEFAULT_ORG_SQL = "SELECT id FROM organizations ORDER BY created_at LIMIT 1";
 
 export async function defaultOrganizationId() {
@@ -13,8 +24,20 @@ export async function defaultOrganizationId() {
   return String(rows[0].id);
 }
 
-export async function listConversations(organizationId: string, search = "", status?: "new" | "open" | "pending" | "resolved", all = false, assignedUserId?: string) {
+export async function listConversations(organizationId: string, search = "", status?: "new" | "open" | "pending" | "resolved", assignedUserId?: string, limit = 10, offset = 0, conversationId?: string, actorRole = "admin") {
   const term = `%${search.trim()}%`;
+  const conditions = ['c.organization_id = ?'];
+  if (actorRole === 'supervisor') conditions.push(NON_ADMIN_CONVERSATION);
+  const params: (string | number)[] = [organizationId];
+  if (conversationId) { conditions.push('c.id = ?'); params.push(conversationId); }
+  if (status) { conditions.push('c.status = ?'); params.push(status); }
+  if (assignedUserId) { conditions.push('c.assigned_user_id = ?'); params.push(assignedUserId); }
+  if (search.trim()) {
+    conditions.push('(ct.name LIKE ? OR ct.profile_name LIKE ? OR ct.phone LIKE ?)');
+    params.push(term, term, term);
+  }
+  limit = Math.max(1, Math.min(10000, Math.trunc(limit) || 10));
+  offset = Math.max(0, Math.trunc(offset) || 0);
   const [rows] = await pool.execute<RowDataPacket[]>(`
     SELECT c.id, c.status, c.priority, c.unread_count AS unreadCount,
       c.service_window_expires_at AS serviceWindowExpiresAt,
@@ -28,14 +51,14 @@ export async function listConversations(organizationId: string, search = "", sta
     JOIN contacts ct ON ct.id = c.contact_id
     LEFT JOIN users u ON u.id = c.assigned_user_id
     LEFT JOIN teams t ON t.id = c.team_id
-    WHERE c.organization_id = ? AND (? = '' OR c.status = ?) AND (? IS NULL OR c.assigned_user_id = ?) AND (? = '%%' OR ct.name LIKE ? OR ct.profile_name LIKE ? OR ct.phone LIKE ?)
-    ORDER BY c.last_message_at DESC, c.created_at DESC ${all ? "" : "LIMIT 100"}`,
-    [organizationId, status || "", status || "", assignedUserId ?? null, assignedUserId ?? null, term, term, term, term]
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY c.last_message_at DESC, c.created_at DESC, c.id DESC LIMIT ${limit + 1} OFFSET ${offset}`,
+    params
   );
-  return rows;
+  return { items: rows.slice(0, limit), hasMore: rows.length > limit };
 }
 
-export async function countConversations(organizationId: string, search = "", userId?: string) {
+export async function countConversations(organizationId: string, search = "", userId?: string, actorRole = "admin") {
   const term = `%${search.trim()}%`;
   const [rows] = await pool.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total,
     SUM(c.status = 'new') AS newCount, SUM(c.status = 'open') AS openCount,
@@ -43,7 +66,7 @@ export async function countConversations(organizationId: string, search = "", us
     SUM(c.assigned_user_id = ?) AS mineCount,
     COALESCE(SUM(c.unread_count), 0) AS unreadCount
     FROM conversations c JOIN contacts ct ON ct.id = c.contact_id
-    WHERE c.organization_id = ? AND (? = '%%' OR ct.name LIKE ? OR ct.profile_name LIKE ? OR ct.phone LIKE ?)`,
+    WHERE c.organization_id = ? ${actorRole === 'supervisor' ? `AND ${NON_ADMIN_CONVERSATION}` : ''} AND (? = '%%' OR ct.name LIKE ? OR ct.profile_name LIKE ? OR ct.phone LIKE ?)`,
     [userId ?? "", organizationId, term, term, term, term]);
   return rows[0] || {};
 }
@@ -56,10 +79,10 @@ export async function adminCanSendConversation(organizationId: string, userId: s
   return Boolean(rows[0]) && String(rows[0]?.assignedUserId || "") === userId;
 }
 
-export async function listContacts(organizationId: string, search = "", status?: "new" | "open" | "pending" | "resolved", page = 1, limit = 25) {
+export async function listContacts(organizationId: string, search = "", status?: "new" | "open" | "pending" | "resolved", page = 1, limit = 25, actorRole = "admin") {
   const term = `%${search.trim()}%`;
   const offset = (page - 1) * limit;
-  const where = `ct.organization_id = ? AND (? = '' OR c.status = ?)
+  const where = `ct.organization_id = ? ${actorRole === 'supervisor' ? `AND ${NON_ADMIN_CONVERSATION}` : ''} AND (? = '' OR c.status = ?)
       AND (? = '%%' OR ct.name LIKE ? OR ct.profile_name LIKE ? OR ct.phone LIKE ? OR ct.wa_id LIKE ?)`;
   const params = [organizationId, status || "", status || "", term, term, term, term, term];
   const [itemsResult, countResult] = await Promise.all([

@@ -2,7 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { requireAuth } from "../modules/auth/auth.js";
-import { addNote, adminCanSendConversation, assignConversation, changeStatus, clearConversation, countConversations, createContact, createQuickReply, deleteConversationContact, getMessageMedia, getMessages, importContacts, listContacts, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, markConversationUnread, openConversationForAgent, reactToMessage, replaceTags, retryAgentMessage, sendAgentMedia, sendAgentTemplate, sendAgentText, signalAgentTyping, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
+import { supervisorCanAccessResource, addNote, adminCanSendConversation, assignConversation, changeStatus, clearConversation, countConversations, createContact, createQuickReply, deleteConversationContact, getMessageMedia, getMessages, importContacts, listContacts, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, markConversationUnread, openConversationForAgent, reactToMessage, replaceTags, retryAgentMessage, sendAgentMedia, sendAgentTemplate, sendAgentText, signalAgentTyping, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
 import { cancelScheduledMessage, createScheduledMessage, listScheduledMessages, updateScheduledMessage } from "../modules/conversations/scheduled.js";
 import { convertVoiceToOgg } from "../modules/conversations/audio.js";
 import { subscribe } from "../modules/realtime/events.js";
@@ -38,6 +38,17 @@ const mediaUpload = multer({
 });
 const contactListUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1 } });
 apiRouter.use(requireAuth);
+apiRouter.use(async (req, res, next) => {
+  if (req.auth!.role !== 'supervisor') return next();
+  const match = /^\/(conversations|messages|scheduled)\/([^/]+)(?:\/|$)/.exec(req.path);
+  if (!match) return next();
+  const resource = match[1] === 'messages' ? 'message' : match[1] === 'scheduled' ? 'scheduled' : 'conversation';
+  if (!await supervisorCanAccessResource(req.auth!.organizationId, decodeURIComponent(match[2]!), resource)) {
+    res.status(403).json({ error: 'Você não tem acesso a esta conversa.' });
+    return;
+  }
+  next();
+});
 async function requireAdminAssignment(req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) {
   if (!["admin", "supervisor"].includes(req.auth!.role) || await adminCanSendConversation(req.auth!.organizationId, req.auth!.id, String(req.params.id))) return next();
   res.status(403).json({ error: "Assuma a conversa antes de enviar mensagens." });
@@ -48,8 +59,18 @@ apiRouter.get("/conversations", async (req, res) => {
   const status = z.enum(["new", "open", "pending", "resolved"]).optional().catch(undefined).parse(req.query.status || undefined);
   const mine = req.query.mine === "true";
   const search = String(req.query.search ?? "");
-  const [items, counts] = await Promise.all([listConversations(req.auth!.organizationId, search, status, req.auth!.role !== "agent", mine ? req.auth!.id : undefined), countConversations(req.auth!.organizationId, search, req.auth!.id)]);
-  res.json({ items, counts });
+  const { limit, offset, id, assignedUserId } = z.object({
+    assignedUserId: z.string().uuid().optional(),
+    id: z.string().uuid().optional(),
+    limit: z.coerce.number().int().min(1).max(10000).default(10),
+    offset: z.coerce.number().int().min(0).max(10000000).default(0)
+  }).parse(req.query);
+  if (assignedUserId && req.auth!.role === 'agent') {
+    res.status(403).json({ error: 'Filtro disponível somente para administradores e supervisores.' });
+    return;
+  }
+  const [page, counts] = await Promise.all([listConversations(req.auth!.organizationId, search, status, mine ? req.auth!.id : status === "open" ? assignedUserId : undefined, limit, offset, id, req.auth!.role), offset === 0 ? countConversations(req.auth!.organizationId, search, req.auth!.id, req.auth!.role) : Promise.resolve(undefined)]);
+  res.json({ ...page, counts });
 });
 apiRouter.get("/contacts", async (req, res) => {
   const query = z.object({
@@ -58,7 +79,7 @@ apiRouter.get("/contacts", async (req, res) => {
     page: z.coerce.number().int().min(1).default(1),
     limit: z.coerce.number().int().min(10).max(50).default(25)
   }).parse(req.query);
-  res.json(await listContacts(req.auth!.organizationId, query.search, query.status, query.page, query.limit));
+  res.json(await listContacts(req.auth!.organizationId, query.search, query.status, query.page, query.limit, req.auth!.role));
 });
 apiRouter.post("/contacts", async (req, res) => {
   const parsed = z.object({
