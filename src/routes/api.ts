@@ -56,10 +56,12 @@ async function requireAdminAssignment(req: import("express").Request, res: impor
 
 apiRouter.get("/status", (_req, res) => res.json({ ok: true, metaConfigured: isMetaConfigured() }));
 apiRouter.get("/conversations", async (req, res) => {
-  const status = z.enum(["new", "open", "pending", "resolved"]).optional().catch(undefined).parse(req.query.status || undefined);
+  const status = z.enum(["new", "open", "pending", "resolved", "campaign", "unread"]).optional().catch(undefined).parse(req.query.status || undefined);
   const mine = req.query.mine === "true";
   const search = String(req.query.search ?? "");
-  const { limit, offset, id, assignedUserId } = z.object({
+  const { limit, offset, id, assignedUserId, selection, after } = z.object({
+    selection: z.enum(['true', 'false']).default('false').transform(value => value === 'true'),
+    after: z.string().uuid().optional(),
     assignedUserId: z.string().uuid().optional(),
     id: z.string().uuid().optional(),
     limit: z.coerce.number().int().min(1).max(10000).default(10),
@@ -69,7 +71,8 @@ apiRouter.get("/conversations", async (req, res) => {
     res.status(403).json({ error: 'Filtro disponível somente para administradores e supervisores.' });
     return;
   }
-  const [page, counts] = await Promise.all([listConversations(req.auth!.organizationId, search, status, mine ? req.auth!.id : status === "open" ? assignedUserId : undefined, limit, offset, id, req.auth!.role), offset === 0 ? countConversations(req.auth!.organizationId, search, req.auth!.id, req.auth!.role) : Promise.resolve(undefined)]);
+  const args = [req.auth!.organizationId, search, status, mine ? req.auth!.id : status === "open" ? assignedUserId : undefined, limit, offset, id, req.auth!.role] as const;
+  const [page, counts] = await Promise.all([selection ? listConversations(...args, true, after) : listConversations(...args), !selection && offset === 0 ? countConversations(req.auth!.organizationId, search, req.auth!.id, req.auth!.role) : Promise.resolve(undefined)]);
   res.json({ ...page, counts });
 });
 apiRouter.get("/contacts", async (req, res) => {

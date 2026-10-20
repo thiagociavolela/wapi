@@ -55,6 +55,24 @@ it('rejects an invalid attendant identifier before querying', async () => {
   expect((await fetch(`${base}?status=open&assignedUserId=invalid`)).status).toBe(400);
   expect(mocks.list).not.toHaveBeenCalled();
 });
+it('accepts the Campaigns filter and preserves organization and supervisor visibility', async () => {
+  mocks.role = 'supervisor';
+  expect((await fetch(`${base}?status=campaign`)).status).toBe(200);
+  expect(mocks.list).toHaveBeenCalledWith('current-org', '', 'campaign', undefined, 10, 0, undefined, 'supervisor');
+});
+it('paginates unread conversations with search and supervisor visibility', async () => {
+  mocks.role = 'supervisor';
+  expect((await fetch(`${base}?status=unread&search=Maria&offset=10`)).status).toBe(200);
+  expect(mocks.list).toHaveBeenCalledWith('current-org', 'Maria', 'unread', undefined, 10, 10, undefined, 'supervisor');
+  expect(mocks.count).not.toHaveBeenCalled();
+});
+it('selects all matching IDs in lightweight pages without recalculating counters', async () => {
+  mocks.role = 'supervisor';
+  const cursor = '22222222-2222-4222-8222-222222222222';
+  expect((await fetch(`${base}?status=open&assignedUserId=${agent}&selection=true&limit=1000&after=${cursor}`)).status).toBe(200);
+  expect(mocks.list).toHaveBeenCalledWith('current-org', '', 'open', agent, 1000, 0, undefined, 'supervisor', true, cursor);
+  expect(mocks.count).not.toHaveBeenCalled();
+});
 it('rejects the attendant filter for agents at the API', async () => {
   mocks.role = 'agent';
   expect((await fetch(`${base}?status=open&assignedUserId=${agent}`)).status).toBe(403);

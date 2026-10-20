@@ -24,13 +24,14 @@ export async function defaultOrganizationId() {
   return String(rows[0].id);
 }
 
-export async function listConversations(organizationId: string, search = "", status?: "new" | "open" | "pending" | "resolved", assignedUserId?: string, limit = 10, offset = 0, conversationId?: string, actorRole = "admin") {
+export async function listConversations(organizationId: string, search = "", status?: "new" | "open" | "pending" | "resolved" | "campaign" | "unread", assignedUserId?: string, limit = 10, offset = 0, conversationId?: string, actorRole = "admin", idsOnly = false, afterId?: string) {
   const term = `%${search.trim()}%`;
   const conditions = ['c.organization_id = ?'];
   if (actorRole === 'supervisor') conditions.push(NON_ADMIN_CONVERSATION);
   const params: (string | number)[] = [organizationId];
   if (conversationId) { conditions.push('c.id = ?'); params.push(conversationId); }
-  if (status) { conditions.push('c.status = ?'); params.push(status); }
+  if (status === 'unread') conditions.push('c.unread_count > 0');
+  else if (status) { conditions.push('c.status = ?'); params.push(status); }
   if (assignedUserId) { conditions.push('c.assigned_user_id = ?'); params.push(assignedUserId); }
   if (search.trim()) {
     conditions.push('(ct.name LIKE ? OR ct.profile_name LIKE ? OR ct.phone LIKE ?)');
@@ -38,6 +39,14 @@ export async function listConversations(organizationId: string, search = "", sta
   }
   limit = Math.max(1, Math.min(10000, Math.trunc(limit) || 10));
   offset = Math.max(0, Math.trunc(offset) || 0);
+  if (idsOnly) {
+    if (afterId) { conditions.push('c.id > ?'); params.push(afterId); }
+    const [rows] = await pool.execute<RowDataPacket[]>(`SELECT c.id FROM conversations c
+      JOIN contacts ct ON ct.id = c.contact_id
+      WHERE ${conditions.join(' AND ')} ORDER BY c.id ASC LIMIT ${limit + 1}`, params);
+    const items = rows.slice(0, limit);
+    return { items, hasMore: rows.length > limit, nextCursor: items.at(-1)?.id };
+  }
   const [rows] = await pool.execute<RowDataPacket[]>(`
     SELECT c.id, c.status, c.priority, c.unread_count AS unreadCount,
       c.service_window_expires_at AS serviceWindowExpiresAt,
@@ -63,6 +72,8 @@ export async function countConversations(organizationId: string, search = "", us
   const [rows] = await pool.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total,
     SUM(c.status = 'new') AS newCount, SUM(c.status = 'open') AS openCount,
     SUM(c.status = 'pending') AS pendingCount, SUM(c.status = 'resolved') AS resolvedCount,
+    SUM(c.status = 'campaign') AS campaignCount,
+    COALESCE(SUM(c.unread_count > 0), 0) AS unreadConversationCount,
     SUM(c.assigned_user_id = ?) AS mineCount,
     COALESCE(SUM(c.unread_count), 0) AS unreadCount
     FROM conversations c JOIN contacts ct ON ct.id = c.contact_id
@@ -439,7 +450,8 @@ export async function replaceTags(organizationId: string, userId: string, conver
 }
 
 export async function markConversationRead(organizationId: string, conversationId: string) {
-  const [result] = await pool.execute<ResultSetHeader>("UPDATE conversations SET unread_count = 0 WHERE id = ? AND organization_id = ?", [conversationId, organizationId]);
+  const [result] = await pool.execute<ResultSetHeader>("UPDATE conversations SET unread_count = 0 WHERE id = ? AND organization_id = ? AND unread_count > 0", [conversationId, organizationId]);
+  if (result.affectedRows) publish(organizationId, { type: "conversation", conversationId });
   return result.affectedRows > 0;
 }
 

@@ -4,6 +4,7 @@ import { pool } from "../../database/pool.js";
 import { sendTemplate } from "../meta/client.js";
 import { fillContactNameTemplateParameter } from "../conversations/service.js";
 import { refreshCarouselImages } from './carousel-media.js';
+import { recordCampaignSend } from '../conversations/campaign-inbox.js';
 
 type Recipient = { phone: string; name?: string };
 type CampaignInput = { name: string; description?: string; templateName: string; templateLanguage: string; templateComponents: unknown[]; templatePreview?: string; delaySeconds: number; scheduledFor?: Date; recipients: Recipient[]; saveContacts: boolean };
@@ -117,7 +118,7 @@ export async function changeCampaignStatus(organizationId: string, id: string, a
 }
 
 let processing = false; let timer: NodeJS.Timeout | undefined;
-async function processCampaigns() {
+export async function processCampaigns() {
   if (processing) return; processing = true;
   try {
     await pool.execute("UPDATE campaigns SET status = 'running', started_at = COALESCE(started_at, NOW(3)) WHERE status = 'scheduled' AND scheduled_for <= NOW(3)");
@@ -138,9 +139,8 @@ async function processCampaigns() {
       try {
         const organizationId = String(campaign.organizationId); const contactId = recipient.contactId ? String(recipient.contactId) : await ensureContact(organizationId, { phone: String(recipient.phone), name: recipient.name ?? undefined });
         await pool.execute("UPDATE campaign_recipients SET contact_id = ? WHERE id = ?", [contactId, recipient.id]);
-        await pool.execute(`INSERT IGNORE INTO conversations (id, organization_id, contact_id, first_response_due_at, resolution_due_at)
-          SELECT ?, ?, ?, DATE_ADD(NOW(3), INTERVAL COALESCE(s.first_response_minutes,15) MINUTE), DATE_ADD(NOW(3), INTERVAL COALESCE(s.resolution_minutes,480) MINUTE)
-          FROM organizations o LEFT JOIN sla_policies s ON s.organization_id=o.id WHERE o.id=?`, [crypto.randomUUID(), organizationId, contactId, organizationId]);
+        await pool.execute(`INSERT IGNORE INTO conversations (id, organization_id, contact_id, status)
+          VALUES (?, ?, ?, 'campaign')`, [crypto.randomUUID(), organizationId, contactId]);
         const [conversations] = await pool.execute<RowDataPacket[]>("SELECT id FROM conversations WHERE organization_id = ? AND contact_id = ? LIMIT 1", [organizationId, contactId]);
         const conversationId = String(conversations[0]!.id); messageId = crypto.randomUUID();
         const [contacts] = await pool.execute<RowDataPacket[]>("SELECT profile_name AS profileName, name FROM contacts WHERE id = ? AND organization_id = ? LIMIT 1", [contactId, organizationId]);
@@ -153,7 +153,7 @@ async function processCampaigns() {
         const result = await sendTemplate(String(recipient.phone), String(campaign.templateName), String(campaign.templateLanguage), components);
         await pool.execute("UPDATE messages SET meta_message_id = ?, status = 'sent', sent_at = NOW(3) WHERE id = ?", [result.messageId, messageId]);
         await pool.execute("UPDATE campaign_recipients SET status = 'sent', message_id = ?, meta_message_id = ?, error_message = NULL, sent_at = NOW(3) WHERE id = ?", [messageId, result.messageId, recipient.id]);
-        await pool.execute("UPDATE conversations SET last_message_preview = ?, last_message_at = NOW(3) WHERE id = ?", [personalized.text.slice(0, 500), conversationId]);
+        await recordCampaignSend(organizationId, conversationId, messageId, personalized.text);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Falha no envio";
         await pool.execute("UPDATE campaign_recipients SET status = 'failed', message_id = ?, error_message = ? WHERE id = ?", [messageId, message, recipient.id]);

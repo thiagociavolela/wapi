@@ -33,6 +33,36 @@ it('omits inactive filters so the all-conversations index can serve ordering', a
   expect(sql).not.toContain('IS NULL OR');
   expect(sql).not.toContain('LIKE');
 });
+it('filters unread conversations across all statuses without treating unread as a stored status', async () => {
+  execute.mockResolvedValueOnce([[], []] as any);
+  await listConversations('org', 'Maria', 'unread', undefined, 10, 20, undefined, 'supervisor');
+  const [sql, params] = execute.mock.calls[0]!;
+  expect(sql).toContain('c.unread_count > 0');
+  expect(sql).not.toContain('c.status = ?');
+  expect(sql).toContain("owner.role = 'admin'");
+  expect(sql).toContain('LIMIT 11 OFFSET 20');
+  expect(params).toEqual(['org', '%Maria%', '%Maria%', '%Maria%']);
+});
+it('counts unread conversations separately from the total unread messages', async () => {
+  const { countConversations } = await import('./service.js');
+  execute.mockResolvedValueOnce([[{ unreadConversationCount: 2, unreadCount: 7 }], []] as any);
+  const counts = await countConversations('org');
+  expect(counts).toMatchObject({ unreadConversationCount: 2, unreadCount: 7 });
+  expect(execute.mock.calls[0]![0]).toContain('SUM(c.unread_count > 0)');
+});
+it('selects IDs using the same unread, search and supervisor restrictions without reading message history', async () => {
+  execute.mockResolvedValueOnce([[{ id: 'b' }, { id: 'c' }], []] as any);
+  const page = await listConversations('org', 'Maria', 'unread', undefined, 1, 0, undefined, 'supervisor', true, 'a');
+  expect(page).toEqual({ items: [{ id: 'b' }], hasMore: true, nextCursor: 'b' });
+  const [sql, params] = execute.mock.calls[0]!;
+  expect(sql).toContain('SELECT c.id FROM conversations');
+  expect(sql).toContain('c.unread_count > 0');
+  expect(sql).toContain("owner.role = 'admin'");
+  expect(sql).toContain('c.id > ?');
+  expect(sql).toContain('ORDER BY c.id ASC LIMIT 2');
+  expect(sql).not.toContain('FROM messages');
+  expect(params).toEqual(['org', '%Maria%', '%Maria%', '%Maria%', 'a']);
+});
 it('hides administrator assignments for supervisors even with a forged attendant selection', async () => {
   execute.mockResolvedValueOnce([[], []] as any);
   await listConversations('org', '', 'open', 'admin-id', 10, 0, undefined, 'supervisor');

@@ -112,9 +112,14 @@ async function processInbound(organizationId: string, message: Json, profileName
       (id, organization_id, conversation_id, meta_message_id, reply_to_message_id, reply_to_meta_message_id, direction, type, text_body, content, status, created_at)
       VALUES (?, ?, ?, ?, ?, ?, 'inbound', ?, ?, ?, 'received', FROM_UNIXTIME(?))`,
       [crypto.randomUUID(), organizationId, conversationId, message.id, replyTargetId, replyToMetaMessageId, message.type ?? "unknown", text, JSON.stringify(storedMessage), Number(message.timestamp) || Math.floor(Date.now() / 1000)]);
-    await connection.execute(`UPDATE conversations SET status = IF(status = 'resolved', 'new', status),
-      unread_count = unread_count + 1, service_window_expires_at = DATE_ADD(NOW(3), INTERVAL 24 HOUR),
-      last_message_preview = ?, last_message_at = FROM_UNIXTIME(?) WHERE id = ?`,
+    await connection.execute(`UPDATE conversations c
+      SET c.first_response_due_at = IF(c.status = 'campaign', DATE_ADD(NOW(3), INTERVAL COALESCE((SELECT first_response_minutes FROM sla_policies WHERE organization_id = c.organization_id), 15) MINUTE), c.first_response_due_at),
+      c.first_response_at = IF(c.status = 'campaign', NULL, c.first_response_at),
+      c.resolution_due_at = IF(c.status = 'campaign', DATE_ADD(NOW(3), INTERVAL COALESCE((SELECT resolution_minutes FROM sla_policies WHERE organization_id = c.organization_id), 480) MINUTE), c.resolution_due_at),
+      c.resolved_at = IF(c.status = 'campaign', NULL, c.resolved_at),
+      c.unread_count = c.unread_count + 1, c.service_window_expires_at = DATE_ADD(NOW(3), INTERVAL 24 HOUR),
+      c.last_message_preview = ?, c.last_message_at = FROM_UNIXTIME(?),
+      c.status = IF(c.status IN ('resolved', 'campaign'), 'new', c.status) WHERE c.id = ?`,
       [(text || `[${message.type ?? "mensagem"}]`).slice(0, 500), Number(message.timestamp) || Math.floor(Date.now() / 1000), conversationId]);
     await markEventProcessed(connection, `message:${message.id}`);
     await connection.commit();

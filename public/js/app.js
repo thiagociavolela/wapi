@@ -7,6 +7,7 @@ const SYSTEM_TIME_ZONE = 'America/Sao_Paulo';
 const selectedConversations = new Set();
 let selectionMode = false;
 let bulkUpdating = false;
+let bulkSelecting = false;
 let conversationPress = null;
 let suppressedConversationClick = null;
 
@@ -111,11 +112,15 @@ let conversationLoadVersion = 0;
 let conversationsHasMore = false;
 let conversationsLoading = false;
 let conversationFilter = '';
+function conversationQuery() {
+  const canFilterByAgent = ['admin', 'supervisor'].includes(state.user?.role);
+  const selectedAgent = canFilterByAgent && state.status === 'open' ? state.selectedAgentId : '';
+  return `search=${encodeURIComponent($('#search').value)}&status=${encodeURIComponent(state.status)}&mine=${state.assignedToMe}${selectedAgent ? `&assignedUserId=${encodeURIComponent(selectedAgent)}` : ''}`;
+}
 async function loadConversations(preserve = true, append = false) {
   const canFilterByAgent = ['admin', 'supervisor'].includes(state.user?.role);
   $('#conversation-agent-filter').classList.toggle('hidden', state.status !== 'open' || !canFilterByAgent);
-  const selectedAgent = canFilterByAgent && state.status === 'open' ? state.selectedAgentId : '';
-  const filter = `search=${encodeURIComponent($('#search').value)}&status=${encodeURIComponent(state.status)}&mine=${state.assignedToMe}${selectedAgent ? `&assignedUserId=${encodeURIComponent(selectedAgent)}` : ''}`;
+  const filter = conversationQuery();
   if (append && (conversationsLoading || !conversationsHasMore || filter !== conversationFilter)) return;
   const reset = filter !== conversationFilter;
   conversationFilter = filter;
@@ -129,7 +134,6 @@ async function loadConversations(preserve = true, append = false) {
     if (version !== conversationLoadVersion) return;
     if (data.counts) {
       $('#total-count').textContent = Number(data.counts.total || 0);
-      $('#unread-count').textContent = Number(data.counts.unreadCount || 0);
       document.querySelectorAll('[data-count]').forEach(badge => { badge.textContent = Number(data.counts[badge.dataset.count] || 0); });
     }
     if (append) {
@@ -170,13 +174,14 @@ function renderConversations() {
 function renderBulkSelection() {
   $('#bulk-conversation-actions').classList.toggle('hidden', !selectionMode);
   $('#bulk-selection-count').textContent = `${selectedConversations.size} selecionada${selectedConversations.size === 1 ? '' : 's'}`;
-  $('#bulk-apply').disabled = bulkUpdating || !selectedConversations.size;
+  $('#bulk-apply').disabled = bulkUpdating || bulkSelecting || !selectedConversations.size;
   $('#bulk-apply').textContent = bulkUpdating ? 'Aplicando\u2026' : 'Aplicar';
-  for (const id of ['bulk-cancel', 'bulk-select-all', 'bulk-status']) $(`#${id}`).disabled = bulkUpdating;
+  $('#bulk-select-all').textContent = bulkSelecting ? 'Selecionando…' : 'Selecionar todas';
+  for (const id of ['bulk-cancel', 'bulk-select-all', 'bulk-select-visible', 'bulk-status']) $(`#${id}`).disabled = bulkUpdating || bulkSelecting;
   renderConversations();
 }
 function toggleConversationSelection(id) {
-  if (bulkUpdating) return;
+  if (bulkUpdating || bulkSelecting) return;
   selectionMode = true;
   if (selectedConversations.has(id)) selectedConversations.delete(id); else selectedConversations.add(id);
   renderBulkSelection();
@@ -190,7 +195,7 @@ conversationList.addEventListener('pointerdown', event => {
   cancelConversationPress();
   suppressedConversationClick = null;
   const button = event.target.closest('[data-id]');
-  if (!button || event.button !== 0 || !event.isPrimary || selectionMode || bulkUpdating) return;
+  if (!button || event.button !== 0 || !event.isPrimary || selectionMode || bulkUpdating || bulkSelecting) return;
   const press = { id: button.dataset.id, pointerId: event.pointerId, x: event.clientX, y: event.clientY };
   press.timer = setTimeout(() => {
     suppressedConversationClick = press.id;
@@ -206,12 +211,33 @@ for (const name of ['pointerup', 'pointercancel']) document.addEventListener(nam
 conversationList.addEventListener('scroll', cancelConversationPress, { passive: true });
 window.addEventListener('blur', cancelConversationPress);
 $('#bulk-cancel').addEventListener('click', () => {
-  if (bulkUpdating) return;
+  if (bulkUpdating || bulkSelecting) return;
   selectedConversations.clear(); selectionMode = false; renderBulkSelection();
 });
-$('#bulk-select-all').addEventListener('click', () => {
-  if (bulkUpdating) return;
+$('#bulk-select-visible').addEventListener('click', () => {
+  if (bulkUpdating || bulkSelecting) return;
   state.conversations.forEach(item => selectedConversations.add(item.id)); renderBulkSelection();
+});
+$('#bulk-select-all').addEventListener('click', async () => {
+  if (bulkUpdating || bulkSelecting) return;
+  const filter = conversationQuery();
+  const ids = new Set();
+  let cursor = '';
+  bulkSelecting = true; renderBulkSelection();
+  try {
+    while (true) {
+      const data = await api(`/api/conversations?${filter}&selection=true&limit=1000${cursor ? `&after=${encodeURIComponent(cursor)}` : ''}`);
+      if (filter !== conversationQuery()) throw new Error('O filtro mudou. Selecione todas novamente.');
+      data.items.forEach(item => ids.add(item.id));
+      if (!data.hasMore) break;
+      if (!data.nextCursor || data.nextCursor === cursor) throw new Error('Não foi possível concluir a seleção. Tente novamente.');
+      cursor = data.nextCursor;
+    }
+    selectedConversations.clear();
+    ids.forEach(id => selectedConversations.add(id));
+    selectionMode = true;
+  } catch (error) { toast(error.message); }
+  finally { bulkSelecting = false; renderBulkSelection(); }
 });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && selectionMode && !bulkUpdating) $('#bulk-cancel').click();
@@ -219,8 +245,9 @@ document.addEventListener('keydown', event => {
   if (button && event.key === ' ' && !selectionMode) { event.preventDefault(); toggleConversationSelection(button.dataset.id); }
 });
 $('#bulk-apply').addEventListener('click', async () => {
-  if (bulkUpdating || !selectedConversations.size) return;
+  if (bulkUpdating || bulkSelecting || !selectedConversations.size) return;
   const ids = [...selectedConversations]; const status = $('#bulk-status').value;
+  const readAction = status === 'read' || status === 'unread';
   bulkUpdating = true; renderBulkSelection();
   let updated = 0; let failure = '';
   try {
@@ -228,13 +255,19 @@ $('#bulk-apply').addEventListener('click', async () => {
     for (let offset = 0; offset < ids.length; offset += 5) {
       await Promise.all(ids.slice(offset, offset + 5).map(async id => {
         try {
-          const result = await api(`/api/conversations/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
-          if (!result?.ok) throw new Error('Conversa n\u00e3o encontrada.');
+          const result = readAction
+            ? await api(`/api/conversations/${id}/${status}`, { method: 'POST' })
+            : await api(`/api/conversations/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
+          // Marking an already-read conversation as read is a successful no-op.
+          if (!result?.ok && status !== 'read') throw new Error('Conversa n\u00e3o encontrada.');
           selectedConversations.delete(id); updated++;
           if (state.active?.id === id) {
-            state.active.status = status;
-            if (status === 'resolved') { state.active.assignedUserId = null; state.active.assignedUserName = null; }
-            $('#status').value = status;
+            if (readAction) state.active.unreadCount = status === 'read' ? 0 : Math.max(1, Number(state.active.unreadCount) || 0);
+            else {
+              state.active.status = status;
+              if (status === 'resolved') { state.active.assignedUserId = null; state.active.assignedUserName = null; }
+              $('#status').value = status;
+            }
           }
         } catch (error) { failure = error.message; }
       }));
@@ -825,10 +858,10 @@ $('#conversation-list').addEventListener('click', event => {
   if (conversation?.status === 'open' && conversation.assignedUserId && conversation.assignedUserId !== state.user.id) {
     $('#conversation-busy-agent').textContent = conversation.assignedUserName || 'outro atendente'; openDialog('conversation-busy-dialog'); return;
   }
-  if (conversation && ['new', 'resolved'].includes(state.status)) {
+  if (conversation && ['new', 'resolved', 'campaign'].includes(conversation.status)) {
     state.pendingOpenConversationId = conversation.id;
     $('#conversation-open-name').textContent = displayName(conversation);
-    $('#conversation-open-message').textContent = state.status === 'resolved' ? 'Esta conversa está concluída. Ao continuar, ela será reaberta e movida para Em atendimento.' : 'Ao continuar, esta nova conversa será iniciada e movida para Em atendimento.';
+    $('#conversation-open-message').textContent = conversation.status === 'campaign' ? 'Esta conversa aguarda resposta de campanha. Ao continuar, você iniciará o atendimento.' : conversation.status === 'resolved' ? 'Esta conversa está concluída. Ao continuar, ela será reaberta e movida para Em atendimento.' : 'Ao continuar, esta nova conversa será iniciada e movida para Em atendimento.';
     $('#conversation-open-error').textContent = ''; openDialog('conversation-open-dialog'); return;
   }
   openConversation(button.dataset.id);
