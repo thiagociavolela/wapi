@@ -82,12 +82,16 @@ export async function countConversations(organizationId: string, search = "", us
   return rows[0] || {};
 }
 
-export async function adminCanSendConversation(organizationId: string, userId: string, conversationId: string) {
+export async function canSendConversation(organizationId: string, userId: string, conversationId: string) {
   const [rows] = await pool.execute<RowDataPacket[]>(
-    "SELECT assigned_user_id AS assignedUserId FROM conversations WHERE id = ? AND organization_id = ? LIMIT 1",
-    [conversationId, organizationId]
+    `SELECT c.assigned_user_id AS assignedUserId, actor.role AS actorRole
+     FROM conversations c
+     JOIN users actor ON actor.id = ? AND actor.organization_id = c.organization_id AND actor.active = TRUE
+     WHERE c.id = ? AND c.organization_id = ?
+       AND (actor.role <> 'supervisor' OR ${NON_ADMIN_CONVERSATION}) LIMIT 1`,
+    [userId, conversationId, organizationId]
   );
-  return Boolean(rows[0]) && String(rows[0]?.assignedUserId || "") === userId;
+  return Boolean(rows[0]) && (["admin", "supervisor"].includes(String(rows[0]?.actorRole)) || String(rows[0]?.assignedUserId || "") === userId);
 }
 
 export async function listContacts(organizationId: string, search = "", status?: "new" | "open" | "pending" | "resolved", page = 1, limit = 25, actorRole = "admin") {

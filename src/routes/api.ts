@@ -2,7 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { requireAuth } from "../modules/auth/auth.js";
-import { supervisorCanAccessResource, addNote, adminCanSendConversation, assignConversation, changeStatus, clearConversation, countConversations, createContact, createQuickReply, deleteConversationContact, getMessageMedia, getMessages, importContacts, listContacts, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, markConversationUnread, openConversationForAgent, reactToMessage, replaceTags, retryAgentMessage, sendAgentMedia, sendAgentTemplate, sendAgentText, signalAgentTyping, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
+import { supervisorCanAccessResource, addNote, canSendConversation, assignConversation, changeStatus, clearConversation, countConversations, createContact, createQuickReply, deleteConversationContact, getMessageMedia, getMessages, importContacts, listContacts, listConversations, listNotes, listQuickReplies, listTags, listUsers, markConversationRead, markConversationUnread, openConversationForAgent, reactToMessage, replaceTags, retryAgentMessage, sendAgentMedia, sendAgentTemplate, sendAgentText, signalAgentTyping, updateContactName, updateConversationRouting } from "../modules/conversations/service.js";
 import { cancelScheduledMessage, createScheduledMessage, listScheduledMessages, updateScheduledMessage } from "../modules/conversations/scheduled.js";
 import { convertVoiceToOgg } from "../modules/conversations/audio.js";
 import { subscribe } from "../modules/realtime/events.js";
@@ -22,7 +22,7 @@ export const apiRouter = Router();
 const carouselCardsSchema=z.array(z.object({mediaId:z.string().regex(/^\d+$/),parameters:z.array(z.string().trim().min(1).max(160)).max(10),url:z.string().url().max(2000),productId:z.string().max(64).optional(),title:z.string().max(80).optional()})).max(10).default([]);
 async function requireCarouselAssetAccess(req: import('express').Request,res: import('express').Response,next: import('express').NextFunction) {
   if(!req.params.id)return requireManager(req,res,next);
-  if(!await adminCanSendConversation(req.auth!.organizationId,req.auth!.id,String(req.params.id)))return res.status(403).json({error:'Assuma a conversa antes de preparar o carrossel.'});
+  if(!await canSendConversation(req.auth!.organizationId,req.auth!.id,String(req.params.id)))return res.status(403).json({error:'Você não tem permissão para preparar o carrossel nesta conversa.'});
   next();
 }
 const scheduledMessageSchema = z.discriminatedUnion("messageType", [
@@ -49,9 +49,9 @@ apiRouter.use(async (req, res, next) => {
   }
   next();
 });
-async function requireAdminAssignment(req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) {
-  if (!["admin", "supervisor"].includes(req.auth!.role) || await adminCanSendConversation(req.auth!.organizationId, req.auth!.id, String(req.params.id))) return next();
-  res.status(403).json({ error: "Assuma a conversa antes de enviar mensagens." });
+async function requireConversationSendAccess(req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) {
+  if (!["admin", "supervisor"].includes(req.auth!.role) || await canSendConversation(req.auth!.organizationId, req.auth!.id, String(req.params.id))) return next();
+  res.status(403).json({ error: "Você não tem permissão para enviar mensagens nesta conversa." });
 }
 
 apiRouter.get("/status", (_req, res) => res.json({ ok: true, metaConfigured: isMetaConfigured() }));
@@ -122,7 +122,7 @@ apiRouter.delete("/conversations/:id/contact", async (req, res) => {
   res.json({ ok: true });
 });
 apiRouter.get("/conversations/:id/scheduled", async (req, res) => res.json({ items: await listScheduledMessages(req.auth!.organizationId, String(req.params.id)) }));
-apiRouter.post("/conversations/:id/scheduled", requireAdminAssignment, async (req, res) => {
+apiRouter.post("/conversations/:id/scheduled", requireConversationSendAccess, async (req, res) => {
   const parsed = scheduledMessageSchema.safeParse(req.body);
   if (!parsed.success || parsed.data.scheduledFor.getTime() < Date.now() + 30000) return res.status(400).json({ error: "Escolha uma data futura e informe a mensagem." });
   try { res.status(201).json(await createScheduledMessage(req.auth!.organizationId, req.auth!.id, String(req.params.id), parsed.data)); }
@@ -168,7 +168,7 @@ apiRouter.get("/products/:productId", async (req, res) => {
     res.json(product);
   } catch (error) { res.status(502).json({ error: error instanceof Error ? error.message : "Falha ao carregar produto." }); }
 });
-apiRouter.post("/conversations/:id/products/:productId/send", requireAdminAssignment, async (req, res) => {
+apiRouter.post("/conversations/:id/products/:productId/send", requireConversationSendAccess, async (req, res) => {
   const productId = z.coerce.number().int().positive().safeParse(req.params.productId);
   if (!productId.success) return res.status(400).json({ error: "Produto inválido." });
   const options = z.object({ includeDescription: z.boolean().default(true) }).safeParse(req.body ?? {});
@@ -189,13 +189,13 @@ apiRouter.get("/conversations/:id/payment-links", async (req, res) => {
   try { res.json({ items: await listPaymentLinks(req.auth!.organizationId, String(req.params.id)) }); }
   catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao listar cobranças." }); }
 });
-apiRouter.post("/conversations/:id/payment-links", requireAdminAssignment, async (req, res) => {
+apiRouter.post("/conversations/:id/payment-links", requireConversationSendAccess, async (req, res) => {
   const parsed = z.object({ name: z.string().trim().min(2).max(160), email: z.union([z.string().trim().email().max(190), z.literal("")]).optional(), description: z.string().trim().max(500).optional(), amount: z.string().trim().min(1).max(40) }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Revise nome, e-mail, descrição e valor da cobrança." });
   try { res.status(201).json(await createPaymentLink(req.auth!.organizationId, req.auth!.id, String(req.params.id), parsed.data)); }
   catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao gerar link de pagamento." }); }
 });
-apiRouter.post("/conversations/:id/payment-links/:paymentLinkId/send", requireAdminAssignment, async (req, res) => {
+apiRouter.post("/conversations/:id/payment-links/:paymentLinkId/send", requireConversationSendAccess, async (req, res) => {
   try {
     const link = await getPaymentLink(req.auth!.organizationId, String(req.params.paymentLinkId));
     if (!link?.paymentUrl) return res.status(404).json({ error: "Link de pagamento não encontrado." });
@@ -204,7 +204,7 @@ apiRouter.post("/conversations/:id/payment-links/:paymentLinkId/send", requireAd
     res.status(201).json(await sendAgentText(req.auth!.organizationId, req.auth!.id, String(req.params.id), text));
   } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar link de pagamento." }); }
 });
-apiRouter.delete("/conversations/:id/payment-links/:paymentLinkId", requireAdminAssignment, async (req, res) => {
+apiRouter.delete("/conversations/:id/payment-links/:paymentLinkId", requireConversationSendAccess, async (req, res) => {
   try {
     const ok = await deletePaymentLink(req.auth!.organizationId, String(req.params.paymentLinkId));
     if (!ok) return res.status(404).json({ error: "Link de pagamento não encontrado." });
@@ -230,7 +230,7 @@ apiRouter.patch("/conversations/:id/routing", async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: "Equipe ou prioridade inválida." });
   res.json({ ok: await updateConversationRouting(req.auth!.organizationId, req.auth!.id, String(req.params.id), parsed.data) });
 });
-apiRouter.post("/conversations/:id/messages", requireAdminAssignment, async (req, res) => {
+apiRouter.post("/conversations/:id/messages", requireConversationSendAccess, async (req, res) => {
   const parsed = z.object({ text: z.string().trim().min(1).max(4096), clientId: z.string().uuid().optional(), replyToMessageId: z.string().uuid().optional() }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "A mensagem precisa ter entre 1 e 4096 caracteres." });
   try {
@@ -239,17 +239,17 @@ apiRouter.post("/conversations/:id/messages", requireAdminAssignment, async (req
     res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar mensagem." });
   }
 });
-apiRouter.post("/conversations/:id/typing", requireAdminAssignment, async (req, res) => {
+apiRouter.post("/conversations/:id/typing", requireConversationSendAccess, async (req, res) => {
   try { res.json(await signalAgentTyping(req.auth!.organizationId, String(req.params.id))); }
   catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao sinalizar digitação." }); }
 });
-apiRouter.post("/conversations/:id/messages/:messageId/reaction", requireAdminAssignment, async (req, res) => {
+apiRouter.post("/conversations/:id/messages/:messageId/reaction", requireConversationSendAccess, async (req, res) => {
   const parsed = z.object({ emoji: z.string().max(32) }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Reação inválida." });
   try { res.json(await reactToMessage(req.auth!.organizationId, req.auth!.id, String(req.params.id), String(req.params.messageId), parsed.data.emoji)); }
   catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao reagir." }); }
 });
-apiRouter.post("/conversations/:id/media", requireAdminAssignment, mediaUpload.single("file"), async (req, res) => {
+apiRouter.post("/conversations/:id/media", requireConversationSendAccess, mediaUpload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Selecione um arquivo válido de até 20 MB." });
   const caption = typeof req.body.caption === "string" ? req.body.caption.trim().slice(0, 1024) : undefined;
   try {
@@ -258,7 +258,7 @@ apiRouter.post("/conversations/:id/media", requireAdminAssignment, mediaUpload.s
     }));
   } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar mídia." }); }
 });
-apiRouter.post("/conversations/:id/voice", requireAdminAssignment, mediaUpload.single("file"), async (req, res) => {
+apiRouter.post("/conversations/:id/voice", requireConversationSendAccess, mediaUpload.single("file"), async (req, res) => {
   if (!req.file || !req.file.mimetype.startsWith("audio/")) return res.status(400).json({ error: "Gravação de áudio inválida." });
   try {
     const buffer = await convertVoiceToOgg(req.file.buffer);
@@ -266,7 +266,7 @@ apiRouter.post("/conversations/:id/voice", requireAdminAssignment, mediaUpload.s
     res.status(201).json(await sendAgentMedia(req.auth!.organizationId, req.auth!.id, String(req.params.id), { buffer, mimeType: "audio/ogg", fileName: "gravacao.ogg" }));
   } catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao enviar áudio." }); }
 });
-apiRouter.post("/conversations/:id/messages/:messageId/retry", requireAdminAssignment, async (req, res) => {
+apiRouter.post("/conversations/:id/messages/:messageId/retry", requireConversationSendAccess, async (req, res) => {
   try { res.json(await retryAgentMessage(req.auth!.organizationId, req.auth!.id, String(req.params.id), String(req.params.messageId))); }
   catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : "Falha ao reenviar mensagem." }); }
 });
@@ -277,7 +277,7 @@ apiRouter.get("/messages/:id/media", async (req, res) => {
     res.send(media.buffer);
   } catch (error) { res.status(404).json({ error: error instanceof Error ? error.message : "Mídia não encontrada." }); }
 });
-apiRouter.post("/conversations/:id/templates", requireAdminAssignment, async (req, res) => {
+apiRouter.post("/conversations/:id/templates", requireConversationSendAccess, async (req, res) => {
   const parsed = z.object({
     name: z.string().trim().min(1).max(512).regex(/^[a-z0-9_]+$/),
     language: z.string().trim().min(2).max(20).default("pt_BR"),
@@ -287,7 +287,7 @@ apiRouter.post("/conversations/:id/templates", requireAdminAssignment, async (re
   try {
     let components=parsed.data.components;let preview: string|undefined;
     if(parsed.data.carouselCards.length||parsed.data.name===CAROUSEL_TEMPLATE_NAME||components.some((component:any)=>component?.type?.toLowerCase()==='carousel')){
-      if(!await adminCanSendConversation(req.auth!.organizationId,req.auth!.id,String(req.params.id)))return res.status(403).json({error:'Assuma a conversa antes de enviar o carrossel.'});
+      if(!await canSendConversation(req.auth!.organizationId,req.auth!.id,String(req.params.id)))return res.status(403).json({error:'Você não tem permissão para enviar o carrossel nesta conversa.'});
       const template=(await listMessageTemplates()).data.find(item=>item.name===parsed.data.name&&item.language===parsed.data.language&&item.status==='APPROVED');
       if(!template)return res.status(422).json({error:'O modelo de carrossel não está aprovado ou disponível.'});
       for(const card of parsed.data.carouselCards)await carouselImagePath(req.auth!.organizationId,card.mediaId);
