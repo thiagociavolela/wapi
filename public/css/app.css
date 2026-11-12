@@ -459,3 +459,14 @@ body{background:#090a11;color:var(--text)}
 .conversation-agent-filter.hidden{display:none}
 
 .status-dot.campaign{background:#d8a454}
+.ad-referral-card{width:340px;max-width:100%;margin:0 0 10px;border:1px solid #ded9f5;border-radius:12px;overflow:hidden;background:#faf9ff;color:#35324b;box-sizing:border-box}
+.ad-referral-label{padding:9px 12px;background:#eeebfc;color:#6350bd;font-size:10px;font-weight:800;letter-spacing:.03em}
+.ad-referral-image{display:block;width:100%;max-height:240px;object-fit:contain;background:#f0edf8}
+.ad-referral-copy{padding:12px;display:flex;flex-direction:column;gap:9px;min-width:0}
+.ad-referral-copy>strong{font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.bubble .ad-referral-preview,.bubble .ad-referral-description p{margin:0;font-size:11px;line-height:1.6;color:#686379}
+.ad-referral-description summary{cursor:pointer;color:#6350bd;font-size:11px;font-weight:700}
+.bubble .ad-referral-description p{margin-top:8px}
+.ad-referral-id{font-size:9px;color:#827c92;overflow-wrap:anywhere}
+.ad-referral-link{align-self:flex-start;border:1px solid #ded9f5;border-radius:7px;padding:7px 11px;color:#6350bd;text-decoration:none;font-size:11px;font-weight:750;background:#fff}
+.ad-referral-link:hover{background:#eeebfc}

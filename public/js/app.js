@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import { createRefreshQueue } from './realtime-refresh.js';
+import { adReferralCard } from './ad-referral.js?v=2';
 import { createCarouselEditor } from './campaign-carousel.js?v=5';
 
 const $ = (selector) => document.querySelector(selector);
@@ -405,7 +406,7 @@ function renderMessages() {
     const grouped = currentDay === previousDay && item.direction === previousDirection;
     previousDay = currentDay; previousDirection = item.direction;
     return `${separator}<div class="message-row ${item.direction} ${grouped ? 'same-author' : 'new-author'}" data-render-key="message:${item.id}" data-message-id="${item.id}">${item.status === 'failed' && item.direction === 'outbound' ? `<button type="button" class="message-retry" data-retry-id="${item.id}" title="${escapeHtml(item.errorMessage || 'Falha no envio. Clique para reenviar.')}" aria-label="Reenviar mensagem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg></button>` : ''}<article class="bubble">
-      ${replyContent(item)}${messageOrigin(item)}${item.senderName ? `<small>${escapeHtml(item.senderName)}</small>` : ''}${messageContent(item)}
+      ${replyContent(item)}${messageOrigin(item)}${item.senderName ? `<small>${escapeHtml(item.senderName)}</small>` : ''}${adReferralCard(item)}${messageContent(item)}
       <footer><time>${time(item.createdAt)}</time>${item.direction === 'outbound' ? `<span class="message-status ${item.status}" title="${escapeHtml(item.errorMessage || statusLabel(item))}">${statusIcon(item.status)}</span>` : ''}</footer>
       ${reactionContent(item)}</article><button type="button" class="message-more" data-open-actions="${item.id}" aria-label="Ações da mensagem">⌄</button></div>`;
   }).join('') : '<div class="empty" data-render-key="empty">Ainda não há mensagens.</div>';
